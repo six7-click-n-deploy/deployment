@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------
+  # 1. HAUPTDATENBANK (PostgreSQL)
+  # ----------------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    container_name: app_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+    ports:
+      - "5432:5432" # Optional: Nur für lokales Debugging
+
+  # ----------------------------------------------------------------
+  # 2. BROKER & RESULT BACKEND (Redis)
+  # ----------------------------------------------------------------
+  redis:
+    image: redis:alpine
+    container_name: app_redis
+    restart: always
+    networks:
+      - app_network
+    # Kein Volume nötig, wenn Cache flüchtig sein darf.
+
+  # ----------------------------------------------------------------
+  # 3. BACKEND API (FastAPI)
+  # ----------------------------------------------------------------
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: app_backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    restart: always
+    volumes:
+      - ./backend:/app # Hot-Reloading für Entwicklung
+    depends_on:
+      - db
+      - redis
+    networks:
+      - app_network
+    ports:
+      - "8000:8000"
+    environment:
+      # Datenbank Verbindung
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      
+      # Redis Verbindung (Celery)
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      
+      # Auth (Google/GitHub)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      SECRET_KEY: ${APP_SECRET_KEY} # Für Session Cookies
+      
+      # OpenStack Config (für Status-Abfragen)
+      OS_AUTH_URL: ${OS_AUTH_URL}
+      OS_PROJECT_ID: ${OS_PROJECT_ID}
+      OS_PROJECT_NAME: ${OS_PROJECT_NAME}
+      OS_USER_DOMAIN_NAME: ${OS_USER_DOMAIN_NAME}
+      OS_USERNAME: ${OS_USERNAME}
+      OS_PASSWORD: ${OS_PASSWORD}
+      OS_REGION_NAME: ${OS_REGION_NAME}
+
+  # ----------------------------------------------------------------
+  # 4. WORKER (Celery + Terraform)
+  # ----------------------------------------------------------------
+  worker:
+    build: 
+      context: ./backend # Nutzt dasselbe Image wie Backend!
+      dockerfile: Dockerfile
+    container_name: app_worker
+    # Startet Celery statt FastAPI
+    command: celery -A worker.celery_app worker --loglevel=info --concurrency=4
+    restart: always
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+      # WICHTIG: SSH Keys mounten für 'git archive' (Git Download)
+      - ~/.ssh:/root/.ssh:ro 
+    networks:
+      - app_network
+    environment:
+      # Identische Envs wie Backend, da er DB & Redis braucht
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      
+      # WICHTIG: OpenStack Envs für Terraform Provider
+      OS_AUTH_URL: ${OS_AUTH_URL}
+      OS_PROJECT_ID: ${OS_PROJECT_ID}
+      OS_PROJECT_NAME: ${OS_PROJECT_NAME}
+      OS_USER_DOMAIN_NAME: ${OS_USER_DOMAIN_NAME}
+      OS_USERNAME: ${OS_USERNAME}
+      OS_PASSWORD: ${OS_PASSWORD}
+      OS_REGION_NAME: ${OS_REGION_NAME}
+
+  # ----------------------------------------------------------------
+  # 5. FRONTEND (Vue/React)
+  # ----------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: app_frontend
+    restart: always
+    ports:
+      - "80:80" # Oder 3000/5173 je nach Dev-Setup
+    networks:
+      - app_network
+    environment:
+      # Achtung: Frontend Envs werden oft zur Build-Zeit gebacken!
+      VITE_API_URL: http://localhost:8000 # URL für den Browser des Users
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
