@@ -1,0 +1,254 @@
+# ================================================================
+# Production Docker Compose Configuration
+# Pulls pre-built images from GitHub Container Registry
+# ================================================================
+
+services:
+  # ----------------------------------------------------------------
+  # PostgreSQL Database
+  # ----------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-prod
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-network
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ----------------------------------------------------------------
+  # Redis (Message Broker & Cache)
+  # ----------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis-prod
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_prod_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend-network
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ----------------------------------------------------------------
+  # Backend Migration Init Container
+  # ----------------------------------------------------------------
+  backend-migrate:
+    image: ghcr.io/six7-click-n-deploy/backend:${BACKEND_VERSION:-latest}
+    container_name: backend-migrate
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend-network
+    restart: "no"
+
+  # ----------------------------------------------------------------
+  # Backend API (FastAPI) - Production
+  # ----------------------------------------------------------------
+  backend:
+    image: ghcr.io/six7-click-n-deploy/backend:${BACKEND_VERSION:-latest}
+    container_name: backend-prod
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      
+      # Security
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      
+      # Application
+      DEBUG: "False"
+      APP_NAME: ${APP_NAME:-Backend API}
+      
+      # Server
+      HOST: 0.0.0.0
+      PORT: 8000
+      WORKERS: ${BACKEND_WORKERS:-4}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
+    volumes:
+      - backend_git_repos:/tmp/repos
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - frontend-network
+      - backend-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------------
+  # Worker Service (Celery) - Production
+  # ----------------------------------------------------------------
+  worker:
+    image: ghcr.io/six7-click-n-deploy/worker:${WORKER_VERSION:-latest}
+    container_name: worker-prod
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      
+      # Application
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - worker_git_repos:/tmp/repos
+    networks:
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------------
+  # Frontend (React/Next.js) - Production
+  # ----------------------------------------------------------------
+  frontend:
+    image: ghcr.io/six7-click-n-deploy/frontend:${FRONTEND_VERSION:-latest}
+    container_name: frontend-prod
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NODE_ENV: production
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - frontend-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ----------------------------------------------------------------
+# Volumes
+# ----------------------------------------------------------------
+volumes:
+  postgres_prod_data:
+    driver: local
+  redis_prod_data:
+    driver: local
+  backend_git_repos:
+    driver: local
+  worker_git_repos:
+    driver: local
+
+# ----------------------------------------------------------------
+# Networks
+# ----------------------------------------------------------------
+networks:
+  frontend-network:
+    driver: bridge
+    name: frontend-network-prod
+  backend-network:
+    driver: bridge
+    name: backend-network-prod
+  worker-network:
+    driver: bridge
+    name: worker-network-prod

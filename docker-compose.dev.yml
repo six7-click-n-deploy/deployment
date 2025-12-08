@@ -1,131 +1,193 @@
-version: '3.8'
+# ================================================================
+# Development Docker Compose Configuration
+# Builds from local Dockerfile.dev with hot reload
+# ================================================================
 
 services:
   # ----------------------------------------------------------------
-  # 1. HAUPTDATENBANK (PostgreSQL)
+  # PostgreSQL Database
   # ----------------------------------------------------------------
-  db:
-    image: postgres:16
-    container_name: db
-    restart: always
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-dev
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-backend_dev}
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - app_network
+      - postgres_dev_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432" # Optional: Nur für lokales Debugging
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend-network
+      - worker-network
+    restart: unless-stopped
 
   # ----------------------------------------------------------------
-  # 2. BROKER & RESULT BACKEND (Redis)
+  # Redis (Message Broker & Cache)
   # ----------------------------------------------------------------
   redis:
-    image: redis:alpine
-    container_name: app_redis
-    restart: always
+    image: redis:7-alpine
+    container_name: redis-dev
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
-      - app_network
-    # Kein Volume nötig, wenn Cache flüchtig sein darf.
+      - backend-network
+      - worker-network
+    restart: unless-stopped
 
   # ----------------------------------------------------------------
-  # 3. BACKEND API (FastAPI)
+  # Backend API (FastAPI) - Development with Hot Reload
   # ----------------------------------------------------------------
   backend:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: app_backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-    restart: always
-    volumes:
-      - ./backend:/app # Hot-Reloading für Entwicklung
-    depends_on:
-      - db
-      - redis
-    networks:
-      - app_network
-    ports:
-      - "8000:8000"
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.dev
+    container_name: backend-dev
     environment:
-      # Datenbank Verbindung
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      # Database
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-backend_dev}
       
-      # Redis Verbindung (Celery)
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      
+      # Celery
       CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
       
-      # Auth (Google/GitHub)
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      SECRET_KEY: ${APP_SECRET_KEY} # Für Session Cookies
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
       
-      # OpenStack Config (für Status-Abfragen)
-      OS_AUTH_URL: ${OS_AUTH_URL}
-      OS_PROJECT_ID: ${OS_PROJECT_ID}
-      OS_PROJECT_NAME: ${OS_PROJECT_NAME}
-      OS_USER_DOMAIN_NAME: ${OS_USER_DOMAIN_NAME}
-      OS_USERNAME: ${OS_USERNAME}
-      OS_PASSWORD: ${OS_PASSWORD}
-      OS_REGION_NAME: ${OS_REGION_NAME}
+      # Application
+      DEBUG: "True"
+      APP_NAME: ${APP_NAME:-Backend API Dev}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Mount source code for hot reload
+      - ../backend:/app
+      - backend_git_repos:/tmp/repos
+    networks:
+      - frontend-network
+      - backend-network
+    restart: unless-stopped
 
   # ----------------------------------------------------------------
-  # 4. WORKER (Celery + Terraform)
+  # Worker Service (Celery) - Development
   # ----------------------------------------------------------------
   worker:
-    build: 
-      context: ./backend # Nutzt dasselbe Image wie Backend!
-      dockerfile: Dockerfile
-    container_name: app_worker
-    # Startet Celery statt FastAPI
-    command: celery -A worker.celery_app worker --loglevel=info --concurrency=4
-    restart: always
-    depends_on:
-      - db
-      - redis
-    volumes:
-      - ./backend:/app
-      # WICHTIG: SSH Keys mounten für 'git archive' (Git Download)
-      - ~/.ssh:/root/.ssh:ro 
-    networks:
-      - app_network
+    build:
+      context: ../worker
+      dockerfile: Dockerfile.dev
+    container_name: worker-dev
     environment:
-      # Identische Envs wie Backend, da er DB & Redis braucht
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      # Database
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-backend_dev}
       
-      # WICHTIG: OpenStack Envs für Terraform Provider
-      OS_AUTH_URL: ${OS_AUTH_URL}
-      OS_PROJECT_ID: ${OS_PROJECT_ID}
-      OS_PROJECT_NAME: ${OS_PROJECT_NAME}
-      OS_USER_DOMAIN_NAME: ${OS_USER_DOMAIN_NAME}
-      OS_USERNAME: ${OS_USERNAME}
-      OS_PASSWORD: ${OS_PASSWORD}
-      OS_REGION_NAME: ${OS_REGION_NAME}
+      # Celery
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      
+      # Application
+      DEBUG: "True"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Mount source code for hot reload
+      - ../worker:/app
+      - worker_git_repos:/tmp/repos
+    networks:
+      - worker-network
+    restart: unless-stopped
 
   # ----------------------------------------------------------------
-  # 5. FRONTEND (Vue/React)
+  # Frontend (React/Next.js) - Development with Hot Reload
   # ----------------------------------------------------------------
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: app_frontend
-    restart: always
-    ports:
-      - "80:80" # Oder 3000/5173 je nach Dev-Setup
-    networks:
-      - app_network
+      context: ../frontend
+      dockerfile: Dockerfile.dev
+    container_name: frontend-dev
     environment:
-      # Achtung: Frontend Envs werden oft zur Build-Zeit gebacken!
-      VITE_API_URL: http://localhost:8000 # URL für den Browser des Users
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NODE_ENV: development
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend
+    volumes:
+      # Mount source code for hot reload
+      - ../frontend:/app
+      - /app/node_modules  # Prevent overwriting node_modules
+      - /app/.next         # Prevent overwriting .next build folder
+    networks:
+      - frontend-network
+    restart: unless-stopped
 
-networks:
-  app_network:
-    driver: bridge
+  # ----------------------------------------------------------------
+  # pgAdmin (Database Management UI) - Development Only
+  # ----------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin-dev
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      - postgres
+    networks:
+      - backend-network
+    restart: unless-stopped
 
+# ----------------------------------------------------------------
+# Volumes
+# ----------------------------------------------------------------
 volumes:
-  postgres_data:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+  backend_git_repos:
+    driver: local
+  worker_git_repos:
+    driver: local
+
+# ----------------------------------------------------------------
+# Networks
+# ----------------------------------------------------------------
+networks:
+  frontend-network:
+    driver: bridge
+    name: frontend-network-dev
+  backend-network:
+    driver: bridge
+    name: backend-network-dev
+  worker-network:
+    driver: bridge
+    name: worker-network-dev
