@@ -5,19 +5,19 @@ services:
   # 1. HAUPTDATENBANK (PostgreSQL)
   # ----------------------------------------------------------------
   db:
-    image: postgres:15-alpine
-    container_name: app_db
+    image: postgres:16
+    container_name: db
     restart: always
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     networks:
       - app_network
     ports:
-      - "5432:5432" # Optional: Nur für lokales Debugging
+      - "5433:5432" # Optional: Nur für lokales Debugging
 
   # ----------------------------------------------------------------
   # 2. BROKER & RESULT BACKEND (Redis)
