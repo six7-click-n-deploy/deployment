@@ -41,7 +41,7 @@ dev-up: ## Start development environment
 	docker compose -f docker-compose.dev.yml up -d
 	@echo ""
 	@echo "✓ Development environment started"
-	@echo "  Frontend:  http://localhost:3000"
+	@echo "  Frontend:  http://localhost:5173"
 	@echo "  Backend:   http://localhost:8000"
 	@echo "  API Docs:  http://localhost:8000/docs"
 	@echo "  pgAdmin:   http://localhost:5050 (admin@admin.com / admin)"
