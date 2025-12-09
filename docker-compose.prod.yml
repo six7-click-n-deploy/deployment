@@ -73,7 +73,10 @@ services:
     container_name: backend-migrate
     command: ["alembic", "upgrade", "head"]
     environment:
+      # Database
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      
+      # Security
       SECRET_KEY: ${SECRET_KEY}
     depends_on:
       postgres:
