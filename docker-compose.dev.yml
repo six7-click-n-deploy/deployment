@@ -113,6 +113,8 @@ services:
       # Mount source code for hot reload
       - ../backend:/app
       - backend_git_repos:/tmp/repos
+      # Mount shared SSH key for Git operations
+      - ssh_keys:/root/.ssh:ro
     networks:
       - frontend-network
       - backend-network
@@ -126,6 +128,13 @@ services:
       context: ../worker
       dockerfile: Dockerfile.dev
     container_name: worker-dev
+    # Use host network to allow OpenStack API access
+    # Note: This disables container network isolation
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     environment:
       # Database
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-backend_dev}
@@ -133,6 +142,10 @@ services:
       # Celery
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      
+      # OpenStack
+      OPENSTACK_CLOUDS_YAML: /app/clouds.yaml
+      OPENSTACK_CLOUD_NAME: openstack
       
       # Application
       DEBUG: "True"
@@ -144,7 +157,30 @@ services:
     volumes:
       # Mount source code for hot reload
       - ../worker:/app
-      - worker_git_repos:/tmp/repos
+      - worker_git_repos:/tmp/worker_repos
+      # Mount OpenStack credentials (create this file!)
+      - ../worker/clouds.yaml:/app/clouds.yaml:ro
+      # Mount shared SSH key for Git operations
+      - ssh_keys:/root/.ssh:ro
+    networks:
+      - worker-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # Flower (Celery Monitoring Dashboard) - Development Only
+  # ----------------------------------------------------------------
+  flower:
+    image: mher/flower:2.0
+    container_name: flower-dev
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      - redis
+      - worker
     networks:
       - worker-network
     restart: unless-stopped
@@ -203,6 +239,12 @@ volumes:
     driver: local
   worker_git_repos:
     driver: local
+  ssh_keys:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${SSH_KEY_PATH:-~/.ssh}
 
 # ----------------------------------------------------------------
 # Networks
