@@ -145,7 +145,6 @@ services:
       
       # OpenStack
       OPENSTACK_CLOUDS_YAML: /app/clouds.yaml
-      OPENSTACK_CLOUD_NAME: openstack
       
       # Application
       DEBUG: "True"
