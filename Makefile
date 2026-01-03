@@ -155,7 +155,7 @@ shell-redis-prod: ## Open Redis CLI (prod)
 # Database Migrations
 # ----------------------------------------------------------------
 migrate-dev: ## Run database migrations (dev)
-	docker compose -f docker-compose.dev.yml exec backend alembic upgrade head
+	docker compose -f docker-compose.dev.yml exec backend poetry run alembic upgrade head
 
 migrate-prod: ## Run database migrations (prod)
 	docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
