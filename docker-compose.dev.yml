@@ -29,20 +29,25 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------------------------
-  # Redis (Message Broker & Cache)
+  # RabbitMQ (Message Broker)
   # ----------------------------------------------------------------
-  redis:
-    image: redis:7-alpine
-    container_name: redis-dev
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_dev_data:/data
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq-dev
+    hostname: rabbitmq-dev
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-admin}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_dev_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
       retries: 5
     networks:
       - backend-network
@@ -67,8 +72,7 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       
       # Celery
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       
       # CORS
       CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:3000", "http://localhost:5173"]}'
@@ -80,8 +84,6 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     volumes:
       # Mount source code for hot reload
@@ -114,8 +116,7 @@ services:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-backend_dev}
       
       # Celery
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       
       # OpenStack
       OPENSTACK_CLOUDS_YAML: /app/clouds.yaml
@@ -125,7 +126,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      rabbitmq:
         condition: service_healthy
     volumes:
       # Mount source code for hot reload
@@ -135,25 +136,6 @@ services:
       - ../worker/clouds.yaml:/app/clouds.yaml:ro
       # Mount shared SSH key for Git operations
       - ssh_keys:/root/.ssh:ro
-    networks:
-      - worker-network
-    restart: unless-stopped
-
-  # ----------------------------------------------------------------
-  # Flower (Celery Monitoring Dashboard) - Development Only
-  # ----------------------------------------------------------------
-  flower:
-    image: mher/flower:2.0
-    container_name: flower-dev
-    command: celery --broker=redis://redis:6379/0 flower --port=5555
-    environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-    ports:
-      - "${FLOWER_PORT:-5555}:5555"
-    depends_on:
-      - redis
-      - worker
     networks:
       - worker-network
     restart: unless-stopped
@@ -206,7 +188,7 @@ services:
 volumes:
   postgres_dev_data:
     driver: local
-  redis_dev_data:
+  rabbitmq_dev_data:
     driver: local
   backend_git_repos:
     driver: local

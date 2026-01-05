@@ -37,20 +37,25 @@ services:
           memory: 512M
 
   # ----------------------------------------------------------------
-  # Redis (Message Broker & Cache)
+  # RabbitMQ (Message Broker)
   # ----------------------------------------------------------------
-  redis:
-    image: redis:7-alpine
-    container_name: redis-prod
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_prod_data:/data
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq-prod
+    hostname: rabbitmq-prod
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_prod_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 5
     networks:
       - backend-network
@@ -60,10 +65,10 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 512M
+          memory: 1G
         reservations:
           cpus: '0.25'
-          memory: 256M
+          memory: 512M
 
   # ----------------------------------------------------------------
   # Backend Migration Init Container
@@ -101,8 +106,7 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       
       # Celery
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       
       # CORS
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -121,7 +125,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      rabbitmq:
         condition: service_healthy
       backend-migrate:
         condition: service_completed_successfully
@@ -162,8 +166,7 @@ services:
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
       
       # Celery
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       
       # Application
       DEBUG: "False"
@@ -171,7 +174,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      rabbitmq:
         condition: service_healthy
     volumes:
       - worker_git_repos:/tmp/repos
@@ -235,7 +238,7 @@ services:
 volumes:
   postgres_prod_data:
     driver: local
-  redis_prod_data:
+  rabbitmq_prod_data:
     driver: local
   backend_git_repos:
     driver: local
