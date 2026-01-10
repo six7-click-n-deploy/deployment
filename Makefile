@@ -165,16 +165,16 @@ migration-create: ## Create new migration (dev, usage: make migration-create MSG
 		echo "Error: Please provide a message. Usage: make migration-create MSG='Your message'"; \
 		exit 1; \
 	fi
-	docker compose -f docker-compose.dev.yml exec backend alembic revision --autogenerate -m "$(MSG)"
+	docker compose -f docker-compose.dev.yml exec backend poetry run alembic revision --autogenerate -m "$(MSG)"
 
 migration-history: ## Show migration history (dev)
-	docker compose -f docker-compose.dev.yml exec backend alembic history
+	docker compose -f docker-compose.dev.yml exec backend poetry run alembic history
 
 migration-current: ## Show current migration (dev)
-	docker compose -f docker-compose.dev.yml exec backend alembic current
+	docker compose -f docker-compose.dev.yml exec backend poetry run alembic current
 
 migration-downgrade: ## Downgrade one migration (dev)
-	docker compose -f docker-compose.dev.yml exec backend alembic downgrade -1
+	docker compose -f docker-compose.dev.yml exec backend poetry run alembic downgrade -1
 
 # ----------------------------------------------------------------
 # Database Management
