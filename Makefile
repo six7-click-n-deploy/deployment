@@ -16,7 +16,7 @@ help: ## Show this help message
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-25s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Services: frontend, backend, worker, postgres, redis"
+	@echo "Services: frontend, backend, worker, postgres, redis, keycloak"
 	@echo ""
 
 # ----------------------------------------------------------------
@@ -44,6 +44,7 @@ dev-up: ## Start development environment
 	@echo "  Frontend:  http://localhost:5173"
 	@echo "  Backend:   http://localhost:8000"
 	@echo "  API Docs:  http://localhost:8000/docs"
+	@echo "  Keycloak:  http://localhost:8080 (admin / admin)"
 	@echo "  pgAdmin:   http://localhost:5050 (admin@admin.com / admin)"
 	@echo ""
 
@@ -150,6 +151,79 @@ shell-redis: ## Open Redis CLI (dev)
 
 shell-redis-prod: ## Open Redis CLI (prod)
 	docker compose -f docker-compose.prod.yml exec redis redis-cli
+
+shell-keycloak: ## Open shell in Keycloak container (dev)
+	docker compose -f docker-compose.dev.yml exec keycloak bash
+
+shell-keycloak-db: ## Open Keycloak PostgreSQL shell (dev)
+	docker compose -f docker-compose.dev.yml exec keycloak-postgres psql -U keycloak -d keycloak
+
+# ----------------------------------------------------------------
+# Keycloak Management
+# ----------------------------------------------------------------
+keycloak-up: ## Start Keycloak service (dev)
+	docker compose -f docker-compose.dev.yml up -d keycloak-postgres keycloak
+	@echo ""
+	@echo "✓ Keycloak started"
+	@echo "  Admin Console: http://localhost:8080/admin"
+	@echo "  Username:      admin"
+	@echo "  Password:      admin"
+	@echo ""
+
+keycloak-down: ## Stop Keycloak service (dev)
+	docker compose -f docker-compose.dev.yml stop keycloak keycloak-postgres
+
+keycloak-restart: ## Restart Keycloak service (dev)
+	docker compose -f docker-compose.dev.yml restart keycloak
+
+keycloak-logs: ## View Keycloak logs (dev)
+	docker compose -f docker-compose.dev.yml logs -f keycloak
+
+keycloak-ps: ## Show Keycloak container status
+	docker compose -f docker-compose.dev.yml ps keycloak keycloak-postgres
+
+keycloak-reset: ## Reset Keycloak (⚠️ WARNING: Deletes all Keycloak data!)
+	@echo "⚠️  WARNING: This will delete all Keycloak data (realms, users, clients)!"
+	@read -p "Are you sure? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		docker compose -f docker-compose.dev.yml stop keycloak; \
+		docker compose -f docker-compose.dev.yml rm -f keycloak-postgres; \
+		docker volume rm deployment_keycloak_postgres_data 2>/dev/null || true; \
+		docker compose -f docker-compose.dev.yml up -d keycloak-postgres; \
+		sleep 5; \
+		docker compose -f docker-compose.dev.yml up -d keycloak; \
+		echo "✓ Keycloak reset complete"; \
+		echo "  Login: admin / admin"; \
+	fi
+
+keycloak-export: ## Export Keycloak realm config
+	@echo "Exporting Keycloak realm 'dhbw'..."
+	docker compose -f docker-compose.dev.yml exec keycloak /opt/keycloak/bin/kc.sh export --dir /tmp --realm dhbw
+	docker compose -f docker-compose.dev.yml cp keycloak:/tmp/dhbw-realm.json ./keycloak-export-$(shell date +%Y%m%d_%H%M%S).json
+	@echo "✓ Realm exported"
+
+keycloak-token: ## Get test token from Keycloak (usage: make keycloak-token USER=test-student PASS=test123)
+	@curl -s -X POST http://localhost:8080/realms/dhbw/protocol/openid-connect/token \
+		-H "Content-Type: application/x-www-form-urlencoded" \
+		-d "client_id=appstore-frontend" \
+		-d "username=$(USER)" \
+		-d "password=$(PASS)" \
+		-d "grant_type=password" | jq -r '.access_token' | head -c 50; echo "..."
+
+keycloak-userinfo: ## Get user info from token (usage: make keycloak-userinfo TOKEN=xxx)
+	@curl -s http://localhost:8080/realms/dhbw/protocol/openid-connect/userinfo \
+		-H "Authorization: Bearer $(TOKEN)" | jq
+
+keycloak-url: ## Show Keycloak URLs
+	@echo "🔐 Keycloak URLs:"
+	@echo ""
+	@echo "  Admin Console:    http://localhost:8080/admin"
+	@echo "  Realm dhbw:       http://localhost:8080/realms/dhbw"
+	@echo "  OIDC Config:      http://localhost:8080/realms/dhbw/.well-known/openid-configuration"
+	@echo "  Token Endpoint:   http://localhost:8080/realms/dhbw/protocol/openid-connect/token"
+	@echo "  User Info:        http://localhost:8080/realms/dhbw/protocol/openid-connect/userinfo"
+	@echo ""
 
 # ----------------------------------------------------------------
 # Database Migrations
