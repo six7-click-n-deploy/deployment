@@ -200,7 +200,7 @@ keycloak-reset: ## Reset Keycloak (⚠️ WARNING: Deletes all Keycloak data!)
 keycloak-export: ## Export Keycloak realm config
 	@echo "Exporting Keycloak realm 'dhbw'..."
 	docker compose -f docker-compose.dev.yml exec keycloak /opt/keycloak/bin/kc.sh export --dir /tmp --realm dhbw
-	docker compose -f docker-compose.dev.yml cp keycloak:/tmp/dhbw-realm.json ./keycloak-export-$(shell date +%Y%m%d_%H%M%S).json
+	docker compose -f docker-compose.dev.yml cp keycloak:/tmp/dhbw-realm.json ./keycloak/keycloak-export.json
 	@echo "✓ Realm exported"
 
 keycloak-token: ## Get test token from Keycloak (usage: make keycloak-token USER=test-student PASS=test123)
