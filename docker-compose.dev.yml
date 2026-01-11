@@ -258,6 +258,12 @@ volumes:
     driver: local
   worker_git_repos:
     driver: local
+  ssh_keys:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${SSH_KEY_PATH:-~/.ssh}
 
 # ----------------------------------------------------------------
 # Networks
