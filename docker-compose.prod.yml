@@ -108,6 +108,9 @@ services:
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       
+      # Git
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
+      
       # CORS
       CORS_ORIGINS: ${CORS_ORIGINS}
       
@@ -167,6 +170,9 @@ services:
       
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      
+      # Git
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
       
       # Application
       DEBUG: "False"

@@ -129,6 +129,9 @@ services:
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       
+      # Git
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
+      
       # Keycloak
       KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://keycloak:8080}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-dhbw}
@@ -182,6 +185,9 @@ services:
       
       # OpenStack
       OPENSTACK_CLOUDS_YAML: /app/clouds.yaml
+      
+      # Git
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
       
       # Application
       DEBUG: "True"
