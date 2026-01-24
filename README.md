@@ -1,373 +1,132 @@
 # Deployment Repository
 
-Central orchestration for all services (frontend, backend, worker).
+Zentrale Orchestrierung für die Entwicklungs- und Produktionsumgebung von Click'n'Deploy.
 
-## 📁 Structure
+## Struktur
 
 ```
 deployment/
-├── docker-compose.dev.yml      # Development environment
-├── docker-compose.prod.yml     # Production environment
-├── Makefile                    # Orchestration commands
-├── .env.example               # Environment template
-├── .env                       # Your environment (not in git)
-└── README.md                  # This file
+├── LICENSE                   # Lizenzdatei
+├── Makefile                  # Orchestrierung Befehle
+├── README.md                 # Diese Datei
+├── docker-compose.dev.yml    # Entwicklungsumgebung
+├── docker-compose.prod.yml   # Produktivumgebung
+├── .env.example              # Environment Vorlage
+├── .env                      # Deine Umgebung (nicht in git)
+└── keycloak                  # Keycloak Konfiguration
+    └── keycloak-export.json  # Keycloak Realm Export
 ```
 
-## 🚀 Quick Start
+## Installation
 
-### First Time Setup
+### Entwicklungsumgebung einrichten
+
+1) Repositories klonen — lege alle drei Projekte und das `deployment`-Verzeichnis an.
 
 ```bash
-# 1. Clone all repositories
 git clone https://github.com/six7-click-n-deploy/frontend.git
 git clone https://github.com/six7-click-n-deploy/backend.git
 git clone https://github.com/six7-click-n-deploy/worker.git
 git clone https://github.com/six7-click-n-deploy/deployment.git
+```
 
-# Expected structure:
-# /path/to/project/
-#   ├── frontend/
-#   ├── backend/
-#   ├── worker/
-#   └── deployment/   <- You are here
+2) In das `deployment`-Verzeichnis wechseln — dort befinden sich `Makefile`, `docker-compose` und `.env`.
 
-# 2. Create environment file
+```bash
 cd deployment
+```
+
+3) `.env` erzeugen und bearbeiten — erzeugt eine `deployment/.env` aus der Vorlage und öffne sie anschließend zum Anpassen.
+
+```bash
 make env
+```
 
-# 3. Edit .env with your values
-nano .env
+4) (Optional) Dev‑Images lokal bauen — nötig, wenn Dockerfiles oder Abhängigkeiten geändert wurden.
 
-# 4. Generate secret key
-make secret  # Copy output to .env
+```bash
+make dev-build
+```
 
-# 5. Start development environment
+5) Entwicklungsumgebung starten — startet alle Services (Hot‑Reload aktiv).
+
+```bash
 make dev-up
+```
 
-# 6. Run initial migrations
+6) Initiale Datenbankmigrationen ausführen — einmalig nach dem ersten Start oder nach Model‑Änderungen.
+
+```bash
 make migrate-dev
 ```
 
-### Access Services
+### Zugriff auf Services
 
 ```
-Frontend:  http://localhost:3000
+Frontend:  http://localhost:5173
 Backend:   http://localhost:8000
 API Docs:  http://localhost:8000/docs
+Keycloak:  http://localhost:8080 (admin / admin)
 pgAdmin:   http://localhost:5050 (admin@admin.com / admin)
 ```
 
-## 🔧 Development Workflow
+## Verfügbare Make‑Commands
 
-### Daily Commands
-
-```bash
-# Start everything
-make dev-up
-
-# View logs
-make dev-logs              # All services
-make dev-logs-backend      # Backend only
-make dev-logs-frontend     # Frontend only
-make dev-logs-worker       # Worker only
-
-# Restart a service
-make restart-backend
-make restart-frontend
-make restart-worker
-
-# Stop everything
-make dev-down
-```
-
-### Code Changes
-
-**Hot Reload is enabled!** Just edit code in:
-- `../frontend/` - Frontend auto-reloads
-- `../backend/` - Backend auto-reloads
-- `../worker/` - Worker auto-reloads
-
-No need to rebuild containers for code changes.
-
-### Database Changes
-
-```bash
-# Create migration (after changing models in backend)
-make migration-create MSG="Add user avatar field"
-
-# Apply migrations
-make migrate-dev
-
-# View migration history
-make migration-history
-
-# Rollback one migration
-make migration-downgrade
-```
-
-### Rebuilding
-
-```bash
-# Rebuild specific service
-make dev-build-backend
-make dev-build-frontend
-make dev-build-worker
-
-# Rebuild everything
-make dev-build
-
-# Full clean rebuild
-make dev-rebuild
-```
-
-## 🚀 Production Deployment
-
-### Prerequisites
-
-1. Images are built and pushed to GitHub Container Registry
-2. `.env` file is configured with production values
-3. Server has Docker and Docker Compose installed
-
-### Deploy
-
-```bash
-# 1. Pull latest images
-make prod-pull
-
-# 2. Start production environment
-make prod-up
-
-# 3. Check status
-make status-prod
-
-# 4. View logs
-make prod-logs
-```
-
-### Update Production
-
-```bash
-# Pull latest images and restart
-make prod-update
-
-# Or manually:
-make prod-pull
-make prod-down
-make prod-up
-```
-
-### Production Monitoring
-
-```bash
-# Check health
-make health-prod
-
-# View logs
-make prod-logs
-make prod-logs-backend
-make prod-logs-frontend
-make prod-logs-worker
-
-# Container stats
-make stats
-
-# Watch status
-make watch-prod
-```
-
-## 🗄️ Database Management
-
-### Backup & Restore
-
-```bash
-# Backup production database
-make db-backup
-
-# Restore from backup
-make db-restore FILE=backup_20231208_120000.sql
-```
-
-### Reset Development DB
-
-```bash
-# ⚠️ WARNING: Deletes all data!
-make db-reset-dev
-```
-
-## 🐚 Shell Access
-
-```bash
-# Backend
-make shell-backend          # Dev
-make shell-backend-prod     # Prod
-
-# Worker
-make shell-worker           # Dev
-make shell-worker-prod      # Prod
-
-# Frontend
-make shell-frontend         # Dev
-
-# Database
-make shell-db               # Dev
-make shell-db-prod          # Prod
-
-# Redis
-make shell-redis            # Dev
-make shell-redis-prod       # Prod
-```
-
-## 🧪 Testing & Code Quality
-
-```bash
-# Run backend tests
-make test-backend
-
-# With coverage
-make test-backend-cov
-
-# Linting
-make lint-backend
-make lint-backend-fix
-
-# Formatting
-make format-backend
-```
-
-## 📊 Architecture
-
-### Development (docker-compose.dev.yml)
-- **Build**: Local builds from `Dockerfile.dev` in each repo
-- **Source**: Mounted from `../service/` directories
-- **Reload**: Hot reload enabled
-- **Database**: PostgreSQL with pgAdmin UI
-- **Networks**: Separate isolated networks
-
-### Production (docker-compose.prod.yml)
-- **Images**: Pulled from `ghcr.io/six7-click-n-deploy/`
-- **Versions**: Controlled via `.env` (`BACKEND_VERSION`, etc.)
-- **Migrations**: Separate init container
-- **Resources**: CPU/Memory limits set
-- **Logging**: JSON file driver with rotation
-- **Networks**: Separate isolated networks
-
-### Network Topology
-
-```
-┌─────────────┐
-│  Frontend   │
-└──────┬──────┘
-       │ frontend-network
-┌──────▼──────┐
-│  Backend    │
-└──┬────────┬─┘
-   │        │
-   │ backend-network    worker-network
-   │        │           │
-┌──▼────┐ ┌─▼───────────▼─┐
-│Postgres│ │     Worker    │
-└────────┘ └───────────────┘
-┌──────────┐
-│  Redis   │ (shared: backend + worker)
-└──────────┘
-```
-
-## 📋 Available Commands
-
-Run `make help` to see all available commands:
+Rufe `make help` auf, um die aktuelle, automatisch generierte Liste aller Targets zu sehen:
 
 ```bash
 make help
 ```
 
-### Quick Reference
+Kurzübersicht (häufig genutzte Targets)
 
-| Command | Description |
-|---------|-------------|
-| `make dev-up` | Start development |
-| `make dev-down` | Stop development |
-| `make dev-logs` | View logs |
-| `make prod-up` | Start production |
-| `make prod-pull` | Pull latest images |
-| `make prod-update` | Update production |
-| `make migrate-dev` | Run migrations |
-| `make shell-backend` | Backend shell |
-| `make health` | Check service health |
+- `make dev-up` : Startet die komplette Entwicklungsumgebung (Container, Hot‑Reload).
+- `make dev-down` : Stoppt die Entwicklungsumgebung.
+- `make dev-logs` : Zeigt Logs aller Dev‑Services in Echtzeit.
+- `make dev-logs-backend` / `make dev-logs-frontend` / `make dev-logs-worker` : Logs einzelner Services.
+- `make dev-build` : Baut alle Development‑Images lokal.
+- `make dev-build-backend` / `make dev-build-frontend` / `make dev-build-worker` : Einzelne Images bauen.
+- `make dev-rebuild` : Rebuild (no-cache) und neu starten der Dev‑Umgebung.
+- `make dev-ps` : Liste der Dev‑Container.
 
-## 🔐 Environment Variables
+- `make prod-up` / `make prod-down` : Start/Stop der Produktions‑Compose.
+- `make prod-pull` : Pull aller Production‑Images.
+- `make prod-update` : Pull + Restart der Production‑Services.
+- `make prod-logs` / `make prod-logs-backend` / `make prod-logs-frontend` / `make prod-logs-worker` : Produktions‑Logs.
 
-See `.env.example` for all available variables.
+- `make shell-backend` / `make shell-worker` / `make shell-frontend` : Öffnet eine Shell im jeweiligen Dev‑Container.
+- `make shell-db` : Öffnet eine `psql`‑Shell gegen die Dev‑Postgres.
+- `make shell-keycloak` / `make shell-keycloak-db` : Keycloak Shell bzw. Keycloak‑DB Shell.
 
-### Required Variables
+- `make migrate-dev` / `make migrate-prod` : Führe Alembic‑Migrations aus (Dev / Prod).
+- `make migration-create MSG="..."` : Erzeuge neue Migration mit Message.
+- `make migration-history` / `make migration-current` / `make migration-downgrade` : Migrationstools.
 
-```bash
-SECRET_KEY=<generate-with-make-secret>
-DB_PASSWORD=<secure-password>
-CORS_ORIGINS=https://yourdomain.com
-```
+- `make db-backup` / `make db-restore FILE=...` : Backup/Restore für Prod‑DB.
+- `make db-reset-dev` : Setzt die Dev‑DB zurück (WARNUNG: löscht Daten).
 
-### Generate Secret Key
+- `make keycloak-up` / `make keycloak-down` / `make keycloak-restart` : Keycloak im Dev starten/stoppen.
+- `make keycloak-export` : Exportiert den Realm (z.B. `dhbw`) nach `keycloak/keycloak-export.json`.
+- `make keycloak-token USER=... PASS=...` / `make keycloak-userinfo TOKEN=...` : Token und Userinfo Commands.
 
-```bash
-make secret
-# Copy output to .env
-```
+- `make health` / `make health-prod` : Einfache Health‑Checks (Dev / Prod).
+- `make status` / `make status-prod` : Zeigt Container‑Status (Dev / Prod).
 
-## 🐛 Troubleshooting
+- `make stats` : `docker stats` für laufende Container.
+- `make watch-dev` / `make watch-prod` : Beobachtet Container‑Status in Intervallen.
 
-### Services Won't Start
+- `make test-backend` / `make test-backend-cov` : Backend‑Tests (mit Coverage).
+- `make lint-backend` / `make lint-backend-fix` / `make format-backend` : Linting / Formatierung.
 
-```bash
-# Check status
-make status
+- `make clean-dev` / `make clean-prod` / `make clean-all` : Aufräum‑Targets (löschen Container/Volumes).
+- `make prune` : Docker System Cleanup (entfernt ungenutzte Ressourcen).
 
-# View logs
-make dev-logs
+- `make restart-backend` / `make restart-frontend` / `make restart-worker` : Neustart einzelner Dev‑Services.
 
-# Check specific service
-make dev-logs-backend
-```
+- Alias‑Targets:
+    - `make up` → `make dev-up`
+    - `make down` → `make dev-down`
+    - `make logs` → `make dev-logs`
+    - `make build` → `make dev-build`
 
-### Port Already in Use
-
-Edit `.env` and change ports:
-```bash
-FRONTEND_PORT=3001
-BACKEND_PORT=8001
-```
-
-### Database Connection Issues
-
-```bash
-# Check if postgres is running
-make shell-db
-
-# Reset database
-make db-reset-dev
-```
-
-### Clean Everything and Start Fresh
-
-```bash
-# ⚠️ WARNING: Deletes all data!
-make clean-dev
-make dev-up
-make migrate-dev
-```
-
-## 📚 Additional Documentation
-
-- Backend: `../backend/README.md`
-- Frontend: `../frontend/README.md`
-- Worker: `../worker/README.md`
-- Migrations: `../backend/MIGRATIONS.md`
-- Docker: `../backend/DOCKER.md`
-
-## 🆘 Support
-
-For issues:
-- Backend: https://github.com/six7-click-n-deploy/backend/issues
-- Frontend: https://github.com/six7-click-n-deploy/frontend/issues
-- Worker: https://github.com/six7-click-n-deploy/worker/issues
-- Deployment: https://github.com/six7-click-n-deploy/deployment/issues
+Wenn du ein spezifisches Target suchst, nutze `make help` — die Ausgabe listet alle Targets mit ihren Beschreibungen.
