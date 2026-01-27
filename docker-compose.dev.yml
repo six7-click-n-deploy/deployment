@@ -110,6 +110,27 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------------------------
+  # Redis (Result Backend for Celery)
+  # ----------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis-dev
+    hostname: redis-dev
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-network
+      - worker-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
   # Backend API (FastAPI) - Development with Hot Reload
   # ----------------------------------------------------------------
   backend:
@@ -128,6 +149,7 @@ services:
       
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       
       # Git
       GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
@@ -149,6 +171,8 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       # Mount source code for hot reload
@@ -182,6 +206,7 @@ services:
       
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
       
       # OpenStack
       OPENSTACK_CLOUDS_YAML: /app/clouds.yaml
@@ -203,6 +228,8 @@ services:
       postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       # Mount source code for hot reload
@@ -267,6 +294,8 @@ volumes:
   keycloak_postgres_data:
     driver: local
   rabbitmq_dev_data:
+    driver: local
+  redis_dev_data:
     driver: local
   backend_git_repos:
     driver: local
