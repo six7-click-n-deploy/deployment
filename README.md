@@ -60,6 +60,11 @@ make dev-up
 make migrate-dev
 ```
 
+7)
+```bash
+docker exec -it keycloak-postgres-dev psql -U keycloak -d keycloak -c "UPDATE realm SET ssl_required = 'NONE' WHERE name = 'master';"
+```
+
 ### Zugriff auf Services
 
 ```
