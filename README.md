@@ -67,7 +67,7 @@ docker exec -it keycloak-postgres-dev psql -U keycloak -d keycloak -c "UPDATE re
 
 8) Realm in Keycloak importieren — nur beim ersten Start nötig.
 
-Hierfür muss auf `http://localhost:8080` der Admin‑Account (`admin` / `admin`) genutzt werden. Klicke oben links im Dropdown, wo standardmäßig "master" steht, auf "Create realm" und wähle die Datei `keycloak/keycloak-export.json` als Resource file aus und klicke anschließend auf "Create".
+Hierfür muss auf `http://localhost:8080` der Admin‑Account (`admin` / `admin`) genutzt werden. Klicke oben links im Dropdown, wo standardmäßig "master" steht, auf "Create realm" und wähle die Datei `keycloak/realm-export.json` als Resource file aus und klicke anschließend auf "Create".
 
 ### Zugriff auf Services
 
