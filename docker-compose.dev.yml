@@ -73,7 +73,7 @@ services:
     command:
       - start-dev
     ports:
-      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
+      - "${KEYCLOAK_PORT:-8080}:8080"
     depends_on:
       keycloak-postgres:
         condition: service_healthy
@@ -252,6 +252,9 @@ services:
       dockerfile: Dockerfile.dev
     container_name: frontend-dev
     environment:
+      VITE_APP_URL: ${VITE_APP_URL:-http://localhost:5173}
+      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8080}
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       NODE_ENV: development
     ports:
