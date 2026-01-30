@@ -60,7 +60,7 @@ make dev-up
 make migrate-dev
 ```
 
-7)
+7) Verhindern, dass Keycloak HTTPS verlangt
 ```bash
 docker exec -it keycloak-postgres-dev psql -U keycloak -d keycloak -c "UPDATE realm SET ssl_required = 'NONE' WHERE name = 'master';"
 ```
