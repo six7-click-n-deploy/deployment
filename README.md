@@ -10,7 +10,9 @@ deployment/
 ├── Makefile                  # Orchestrierung Befehle
 ├── README.md                 # Diese Datei
 ├── docker-compose.dev.yml    # Entwicklungsumgebung
-├── docker-compose.prod.yml   # Produktivumgebung
+├── docker-compose.prod.yml   # Produktivumgebung (Makefile prod-* Targets)
+├── docker-compose.deploy.yml # Server-Deployment (vollständiger Stack, Ansible: staging + prod)
+├── docker-compose.staging.yml# Staging-Override (tauscht Keycloak-Realm gegen Test-User-Realm)
 ├── .env.example              # Environment Vorlage
 ├── .env                      # Deine Umgebung (nicht in git)
 └── keycloak                  # Keycloak Konfiguration

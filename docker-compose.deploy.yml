@@ -1,0 +1,386 @@
+# ================================================================
+# Server deployment stack (staging / prod VM) — STANDALONE.
+#
+# Pulls pre-built images from GitHub Container Registry and runs the full
+# stack: postgres, rabbitmq, redis, keycloak (+ its postgres), backend
+# (+ migrate init), worker, frontend.
+#
+#   docker compose -f docker-compose.deploy.yml up -d
+#
+# Staging layers docker-compose.staging.yml on top to swap the Keycloak
+# realm-import file (test users); production uses this file alone.
+# ================================================================
+services:
+  # ----------------------------------------------------------------
+  # PostgreSQL Database (application)
+  # ----------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-prod
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-network
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ----------------------------------------------------------------
+  # RabbitMQ (Celery broker)
+  # ----------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq-prod
+    hostname: rabbitmq-prod
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_prod_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-network
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+  # ----------------------------------------------------------------
+  # Redis — Celery RESULT backend (broker is RabbitMQ above).
+  # ----------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis-prod
+    hostname: redis
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-network
+      - worker-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # Keycloak database
+  # ----------------------------------------------------------------
+  keycloak-postgres:
+    image: postgres:16-alpine
+    container_name: keycloak-postgres-prod
+    environment:
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
+    volumes:
+      - keycloak_postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER:-keycloak}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - keycloak-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # Keycloak (Identity Provider)
+  # Imports the `dhbw` realm from keycloak/realm-export.json on first boot
+  # (skipped once the realm exists in the persistent DB volume).
+  #
+  # NOTE: uses start-dev (HTTP, no hostname enforcement) — fine for a
+  # staging VM reached over http://<ip>:8080. For real production behind
+  # TLS, switch to `start` and set KC_HOSTNAME to the public URL.
+  # ----------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: keycloak-prod
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    networks:
+      - keycloak-network
+      - backend-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # Backend Migration Init Container
+  # ----------------------------------------------------------------
+  backend-migrate:
+    image: ghcr.io/six7-click-n-deploy/backend:${BACKEND_VERSION:-latest}
+    container_name: backend-migrate
+    # The prod image ships the alembic Python module but not the bin/alembic
+    # console script, so invoke it via `python -m alembic` (the bare `alembic`
+    # exec fails with "no such file or directory").
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+
+      # Security
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend-network
+    restart: "no"
+
+  # ----------------------------------------------------------------
+  # Backend API (FastAPI)
+  # ----------------------------------------------------------------
+  backend:
+    image: ghcr.io/six7-click-n-deploy/backend:${BACKEND_VERSION:-latest}
+    container_name: backend-prod
+    # Same image issue as backend-migrate: the venv's console scripts (uvicorn,
+    # alembic) carry a build-time shebang (#!/build/.venv/bin/python) that doesn't
+    # exist at runtime, so the bare `uvicorn` exec fails with "no such file or
+    # directory". Run via `python -m uvicorn` to bypass the broken script shebang.
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+
+      # Security
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+
+      # Celery (broker = RabbitMQ, result backend = Redis)
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+
+      # Keycloak
+      KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://keycloak:8080}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-dhbw}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-appstore-backend}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in .env}
+      KEYCLOAK_ENABLED: ${KEYCLOAK_ENABLED:-true}
+
+      # Git
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
+
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS}
+
+      # Application
+      DEBUG: "False"
+      APP_NAME: ${APP_NAME:-Backend API}
+
+      # Server
+      HOST: 0.0.0.0
+      PORT: 8000
+      WORKERS: ${BACKEND_WORKERS:-4}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      backend-migrate:
+        condition: service_completed_successfully
+    volumes:
+      - backend_git_repos:/tmp/repos
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - frontend-network
+      - backend-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------------
+  # Worker Service (Celery)
+  # ----------------------------------------------------------------
+  worker:
+    image: ghcr.io/six7-click-n-deploy/worker:${WORKER_VERSION:-latest}
+    container_name: worker-prod
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+
+      # Celery (broker = RabbitMQ, result backend = Redis)
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+
+      # Git
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
+
+      # Email (Gmail SMTP)
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-AppStore Deployment}
+
+      # Application
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - worker_git_repos:/tmp/repos
+    networks:
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ----------------------------------------------------------------
+  # Frontend (Vue 3 SPA, served by nginx in the image)
+  # ----------------------------------------------------------------
+  frontend:
+    image: ghcr.io/six7-click-n-deploy/frontend:${FRONTEND_VERSION:-latest}
+    container_name: frontend-prod
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NODE_ENV: production
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - frontend-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ----------------------------------------------------------------
+# Volumes
+# ----------------------------------------------------------------
+volumes:
+  postgres_prod_data:
+    driver: local
+  rabbitmq_prod_data:
+    driver: local
+  backend_git_repos:
+    driver: local
+  worker_git_repos:
+    driver: local
+  redis_prod_data:
+    driver: local
+  keycloak_postgres_prod_data:
+    driver: local
+
+# ----------------------------------------------------------------
+# Networks
+# ----------------------------------------------------------------
+networks:
+  frontend-network:
+    driver: bridge
+    name: frontend-network-prod
+  backend-network:
+    driver: bridge
+    name: backend-network-prod
+  worker-network:
+    driver: bridge
+    name: worker-network-prod
+  keycloak-network:
+    driver: bridge
+    name: keycloak-network-prod
