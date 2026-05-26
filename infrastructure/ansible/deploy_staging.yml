@@ -69,11 +69,19 @@
         executable: /bin/bash
       changed_when: true
 
+    - name: Pull alle Images
+      ansible.builtin.shell:
+        cmd: docker compose -f docker-compose.deploy.yml pull
+        chdir: "{{ project_root }}"
+      changed_when: true
+      async: 600
+      poll: 30
+
     - name: Start the application with Docker Compose
       community.docker.docker_compose_v2:
         project_src: "{{ project_root }}"
         files: ["docker-compose.deploy.yml"]
-        pull: always
+        pull: never
         state: present
       register: compose_output
 
