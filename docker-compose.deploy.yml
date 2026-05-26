@@ -321,7 +321,6 @@ services:
     image: ghcr.io/six7-click-n-deploy/frontend:${FRONTEND_VERSION:-latest}
     container_name: frontend-prod
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
       NODE_ENV: production
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
