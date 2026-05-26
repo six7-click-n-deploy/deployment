@@ -7,7 +7,7 @@ on:
 jobs:
   deploy:
     name: Staging Deploy
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       OS_AUTH_URL: ${{ secrets.STAGING_OS_AUTH_URL }}
       OS_APPLICATION_CREDENTIAL_ID: ${{ secrets.STAGING_OS_APPLICATION_CREDENTIAL_ID }}
