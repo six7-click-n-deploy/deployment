@@ -86,6 +86,7 @@ jobs:
         env:
           ANSIBLE_HOST_KEY_CHECKING: 'False'
           ANSIBLE_FORCE_COLOR: 'True'
+          STAGING_ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
 
       - name: Cleanup Sensitive Files
         if: always()

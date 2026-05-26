@@ -1,6 +1,6 @@
 ---
 - name: 2. CONFIGURE Docker and Deploy Application on Staging Environment
-  hosts: docker_vm # Target the host group created by the Terraform inventory plugin
+  hosts: docker_vm
   become: yes
   gather_facts: yes
 
@@ -9,27 +9,6 @@
     docker_install_compose: true
     project_root: "/home/ubuntu/app"
     local_compose_path: "{{ playbook_dir }}/../../"
-
-    # --- Staging Template-Seed (only this playbook, not production) ---
-    # Realm the backend + frontend use; tokens are validated against this realm.
-    seed_keycloak_realm: dhbw
-    # Test teacher used to create the seed templates. MUST exist as a user in
-    # keycloak/keycloak-export.json (the realm imported on staging), with this
-    # password and the `teacher` realm role.
-    seed_teacher_user: "test-teacher"
-    seed_teacher_pass: "test123"
-    # App templates created on every staging deploy. Idempotent: a template is
-    # only created if no app with the same name already exists for this user.
-    # git_link: leave "" to seed a visible-but-not-deployable template (skips the
-    # backend's repo-access check); set a real repo URL for a deployable one
-    # (the backend must reach it — see GIT_ACCESS_TOKEN).
-    seed_app_templates:
-      - name: "Jupyter Lab"
-        description: "Staging seed template"
-        git_link: ""
-      - name: "GitLab"
-        description: "Staging seed template"
-        git_link: ""
 
   pre_tasks:
     - name: Verzeichnis für App erstellen
@@ -63,18 +42,18 @@
           - "--exclude=frontend/dist"
           - "--exclude=frontend/test-results"
           - "--exclude=frontend/blob-report"
-          # model_files/*.gguf is multi-GB; the docker-compose model-downloader
-          # service fetches the model on the VM, so we never ship it via rsync.
-          - "--exclude=model_files"
           - "--exclude=.DS_Store"
           - "--exclude=*.pyc"
+          - "--exclude=.env"
 
-    # The six7-click-n-deploy images are PRIVATE, so the daemon must authenticate
-    # to GHCR before `compose pull`. We read GIT_USER/GIT_ACCESS_TOKEN from the .env
-    # that was just rsynced to the VM and log in via the docker CLI. --password-stdin
-    # keeps the token out of the process args; the token only ever lives in a
-    # runtime shell variable and on stdin (never in the task text or Ansible output).
-    # No GIT_ACCESS_TOKEN in .env => login is skipped (e.g. if the packages are public).
+    - name: .env auf VM schreiben
+      ansible.builtin.copy:
+        content: "{{ lookup('env', 'STAGING_ENV_FILE') }}"
+        dest: "{{ project_root }}/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
     - name: Log in to GHCR using credentials from the deployed .env
       ansible.builtin.shell:
         cmd: |
@@ -93,10 +72,7 @@
     - name: Start the application with Docker Compose
       community.docker.docker_compose_v2:
         project_src: "{{ project_root }}"
-        # deploy.yml = full standalone stack (GHCR images + redis + keycloak)
-        # + staging.yml (swaps in the test-user realm). Order matters: staging
-        # overrides deploy.
-        files: ["docker-compose.deploy.yml", "docker-compose.staging.yml"]
+        files: ["docker-compose.deploy.yml"]
         pull: always
         state: present
       register: compose_output
@@ -104,66 +80,3 @@
     - name: Status der Deployment anzeigen
       ansible.builtin.debug:
         var: compose_output
-
-    # ------------------------------------------------------------------
-    # Template-Seed (staging only): create example app templates so the
-    # fresh staging env is not empty. Runs ON the VM against localhost, so
-    # no public exposure / VPN is needed (backend publishes :8000, keycloak
-    # :8080). Idempotent: templates are created only if missing.
-    # ------------------------------------------------------------------
-    - name: Wait for Keycloak realm to be ready
-      ansible.builtin.uri:
-        url: "http://localhost:8080/realms/{{ seed_keycloak_realm }}/.well-known/openid-configuration"
-        status_code: 200
-      register: seed_kc_ready
-      until: seed_kc_ready.status == 200
-      retries: 30
-      delay: 5
-
-    - name: Wait for backend to be healthy
-      ansible.builtin.uri:
-        url: "http://localhost:8000/health"
-        status_code: 200
-      register: seed_be_ready
-      until: seed_be_ready.status == 200
-      retries: 30
-      delay: 5
-
-    - name: Get test-teacher access token (password grant via appstore-frontend)
-      ansible.builtin.uri:
-        url: "http://localhost:8080/realms/{{ seed_keycloak_realm }}/protocol/openid-connect/token"
-        method: POST
-        body_format: form-urlencoded
-        body:
-          client_id: appstore-frontend
-          grant_type: password
-          username: "{{ seed_teacher_user }}"
-          password: "{{ seed_teacher_pass }}"
-        status_code: 200
-      register: seed_token
-      no_log: true   # keeps the password + token out of the Ansible log
-
-    # First authenticated call also JIT-provisions the backend `users` row
-    # (keyed by the token's `sub`) via sync_user_from_keycloak.
-    - name: List existing apps for the test teacher
-      ansible.builtin.uri:
-        url: "http://localhost:8000/apps/"
-        headers:
-          Authorization: "Bearer {{ seed_token.json.access_token }}"
-        status_code: 200
-      register: seed_existing_apps
-
-    - name: Seed app templates (only those not already present)
-      ansible.builtin.uri:
-        url: "http://localhost:8000/apps/"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ seed_token.json.access_token }}"
-        body_format: json
-        body:
-          name: "{{ item.name }}"
-          description: "{{ item.description }}"
-          git_link: "{{ item.git_link }}"
-        status_code: 201
-      loop: "{{ seed_app_templates }}"
-      when: item.name not in (seed_existing_apps.json | map(attribute='name') | list)
