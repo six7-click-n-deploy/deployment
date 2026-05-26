@@ -1,0 +1,35 @@
+name: Test self-hosted runner
+
+on:
+  push:
+    branches: [test/runner-check]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: self-hosted
+    steps:
+      - name: Hostname & OS
+        run: |
+          echo "Running on: $(hostname)"
+          echo "--- /etc/os-release ---"
+          head -3 /etc/os-release
+
+      - name: DNS resolution
+        run: |
+          echo "--- github.com ---"
+          getent hosts github.com
+          echo "--- stack.dhbw.cloud ---"
+          getent hosts stack.dhbw.cloud
+
+      - name: OpenStack Keystone reachability
+        run: |
+          curl -sS -o /dev/null -w "Keystone HTTP %{http_code} (time %{time_total}s)\n" \
+            https://stack.dhbw.cloud:5000/v3/
+
+      - name: Tooling check
+        run: |
+          for tool in git curl tar; do
+            printf "%-8s " "$tool"
+            command -v "$tool" >/dev/null && echo "ok ($($tool --version 2>&1 | head -1))" || echo "MISSING"
+          done
