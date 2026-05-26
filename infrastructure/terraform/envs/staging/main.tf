@@ -5,7 +5,7 @@ module "vm" {
 
   name         = "staging-docker"
   image        = "Ubuntu 22.04"
-  flavor       = "m1.extra_large"
+  flavor       = "gp1.large"
   public_key   = var.ssh_public_key
   network_name = "DHBW"
 
