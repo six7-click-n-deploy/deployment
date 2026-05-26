@@ -177,6 +177,7 @@ services:
     volumes:
       # Mount source code for hot reload
       - ../backend:/app
+      - /app/.venv
       - backend_git_repos:/tmp/repos
       # Mount shared SSH key for Git operations
       - ssh_keys:/root/.ssh:ro
@@ -234,6 +235,7 @@ services:
     volumes:
       # Mount source code for hot reload
       - ../worker:/app
+      - /app/.venv
       - worker_git_repos:/tmp/worker_repos
       # Mount OpenStack credentials (create this file!)
       - ../worker/clouds.yaml:/app/clouds.yaml:ro
