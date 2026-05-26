@@ -77,6 +77,11 @@
       async: 600
       poll: 30
 
+    - name: GHCR credentials aus root-Store entfernen
+      ansible.builtin.file:
+        path: /root/.docker/config.json
+        state: absent
+
     - name: Start the application with Docker Compose
       community.docker.docker_compose_v2:
         project_src: "{{ project_root }}"
