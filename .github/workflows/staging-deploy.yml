@@ -3,6 +3,7 @@ name: CD - Staging Deployment
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   deploy:
