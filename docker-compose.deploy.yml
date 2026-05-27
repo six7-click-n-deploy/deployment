@@ -321,6 +321,11 @@ services:
     container_name: frontend-prod
     environment:
       NODE_ENV: production
+      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://keycloak:8080}
+      VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-dhbw}
+      VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-appstore-frontend}
+      VITE_APP_URL: ${VITE_APP_URL}
+      VITE_API_URL: ${VITE_API_URL}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     depends_on:
