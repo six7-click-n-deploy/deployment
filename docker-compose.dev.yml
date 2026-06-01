@@ -312,6 +312,7 @@ services:
       - postgres
     networks:
       - backend-network
+      - worker-network
     restart: unless-stopped
 
 # ----------------------------------------------------------------
