@@ -37,6 +37,39 @@ services:
           memory: 512M
 
   # ----------------------------------------------------------------
+  # PostgreSQL Database (Terraform Remote State)
+  # ----------------------------------------------------------------
+  # Worker-only Postgres for Terraform's `pg` backend. Deliberately
+  # isolated from the application DB: the worker must never reach the
+  # backend's data, only its own state store. One schema per deployment
+  # (`deployment_<uuid>`) keeps the locking/state surface tight.
+  postgres-tfstate:
+    image: postgres:16-alpine
+    container_name: postgres-tfstate-prod
+    environment:
+      POSTGRES_USER: ${TFSTATE_DB_USER:-terraform}
+      POSTGRES_PASSWORD: ${TFSTATE_DB_PASSWORD:?TFSTATE_DB_PASSWORD is required}
+      POSTGRES_DB: ${TFSTATE_DB_NAME:-tfstate}
+    volumes:
+      - postgres_tfstate_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TFSTATE_DB_USER:-terraform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ----------------------------------------------------------------
   # RabbitMQ (Message Broker)
   # ----------------------------------------------------------------
   rabbitmq:
@@ -104,6 +137,7 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       ALGORITHM: ${ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
       
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
@@ -165,15 +199,20 @@ services:
     image: ghcr.io/six7-click-n-deploy/worker:${WORKER_VERSION:-latest}
     container_name: worker-prod
     environment:
-      # Database
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:?CELERY_RESULT_BACKEND is required (Redis URL)}
+
+      # OpenStack credential decryption (must match backend)
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
+
+      # Terraform pg backend — isolated DB, NOT the application DB.
+      # Worker uses one schema per deployment (deployment_<uuid>).
+      TFSTATE_DATABASE_URL: postgresql://${TFSTATE_DB_USER:-terraform}:${TFSTATE_DB_PASSWORD:?TFSTATE_DB_PASSWORD is required}@postgres-tfstate:5432/${TFSTATE_DB_NAME:-tfstate}?sslmode=disable
+
       # Git
       GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
-      
+
       # Email (Gmail SMTP)
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -181,14 +220,14 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-AppStore Deployment}
-      
+
       # Application
       DEBUG: "False"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
-      postgres:
-        condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      postgres-tfstate:
         condition: service_healthy
     volumes:
       - worker_git_repos:/tmp/repos
@@ -251,6 +290,8 @@ services:
 # ----------------------------------------------------------------
 volumes:
   postgres_prod_data:
+    driver: local
+  postgres_tfstate_data:
     driver: local
   rabbitmq_prod_data:
     driver: local

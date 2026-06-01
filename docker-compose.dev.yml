@@ -29,6 +29,31 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------------------------
+  # PostgreSQL Database (Terraform Remote State)
+  # ----------------------------------------------------------------
+  # Worker-only Postgres for Terraform's `pg` backend. Deliberately
+  # isolated from the application DB: the worker must never reach the
+  # backend's data, only its own state store. One schema per deployment
+  # (`deployment_<uuid>`) keeps the locking/state surface tight.
+  postgres-tfstate:
+    image: postgres:16-alpine
+    container_name: postgres-tfstate-dev
+    environment:
+      POSTGRES_USER: ${TFSTATE_DB_USER:-terraform}
+      POSTGRES_PASSWORD: ${TFSTATE_DB_PASSWORD:-terraform}
+      POSTGRES_DB: ${TFSTATE_DB_NAME:-tfstate}
+    volumes:
+      - postgres_tfstate_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TFSTATE_DB_USER:-terraform}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - worker-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
   # PostgreSQL Database (Keycloak)
   # ----------------------------------------------------------------
   keycloak-postgres:
@@ -69,7 +94,6 @@ services:
       # Development Settings
       KC_HOSTNAME_STRICT: 'false'
       KC_HTTP_ENABLED: 'true'
-      KC_PROXY: edge
     command:
       - start-dev
     ports:
@@ -146,6 +170,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-12345}
       ALGORITHM: ${ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
       
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
@@ -202,19 +227,20 @@ services:
       - 8.8.8.8
       - 8.8.4.4
     environment:
-      # Database
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-backend_dev}
-      
       # Celery
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:-admin}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       CELERY_RESULT_BACKEND: redis://redis:6379/0
-      
-      # OpenStack
-      OPENSTACK_CLOUDS_YAML: /app/clouds.yaml
-      
+
+      # OpenStack credential decryption (must match backend)
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
+
+      # Terraform pg backend — isolated DB, NOT the application DB.
+      # Worker uses one schema per deployment (deployment_<uuid>).
+      TFSTATE_DATABASE_URL: postgresql://${TFSTATE_DB_USER:-terraform}:${TFSTATE_DB_PASSWORD:-terraform}@postgres-tfstate:5432/${TFSTATE_DB_NAME:-tfstate}?sslmode=disable
+
       # Git
       GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
-      
+
       # Email (Gmail SMTP)
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -222,23 +248,21 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-AppStore Deployment}
-      
+
       # Application
       DEBUG: "True"
     depends_on:
-      postgres:
-        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      postgres-tfstate:
         condition: service_healthy
     volumes:
       # Mount source code for hot reload
       - ../worker:/app
       - /app/.venv
       - worker_git_repos:/tmp/worker_repos
-      # Mount OpenStack credentials (create this file!)
-      - ../worker/clouds.yaml:/app/clouds.yaml:ro
       # Mount shared SSH key for Git operations
       - ssh_keys:/root/.ssh:ro
     networks:
@@ -295,6 +319,8 @@ services:
 # ----------------------------------------------------------------
 volumes:
   postgres_dev_data:
+    driver: local
+  postgres_tfstate_data:
     driver: local
   keycloak_postgres_data:
     driver: local
