@@ -211,6 +211,20 @@ services:
       # CORS
       CORS_ORIGINS: ${CORS_ORIGINS}
 
+      # Email (Gmail SMTP) — used by the post-deploy notify hook in
+      # celery_event_listener.py. Leave SMTP_USER empty to disable
+      # mail entirely; the notify hook turns into a no-op.
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Click-n-Deploy}
+
+      # Public base URL of the frontend, used in owner-summary mails
+      # to deep-link back to the deployment detail page.
+      APP_BASE_URL: ${APP_BASE_URL}
+
       # Application
       DEBUG: "False"
       APP_NAME: ${APP_NAME:-Backend API}
@@ -275,14 +289,6 @@ services:
 
       # Git
       GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
-
-      # Email (Gmail SMTP)
-      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
-      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-AppStore Deployment}
 
       # Application
       DEBUG: "False"
