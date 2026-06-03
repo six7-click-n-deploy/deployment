@@ -1,0 +1,9 @@
+# gitleaks fingerprints to ignore.
+# Format: <commit-sha>:<path>:<rule>:<line>
+# Each entry MUST be accompanied by a comment explaining why.
+
+# Test-realm seed for local dev (`make dev-up` imports this into a
+# throwaway Keycloak). Contains a hard-coded "test123" password for the
+# `test-teacher` user. Production never imports this file. Re-evaluate
+# if the file ever ships outside dev compose.
+ae6597035409374d1fe83f23a7d267a3014ae343:keycloak/keycloak-export.json:generic-api-key:520
