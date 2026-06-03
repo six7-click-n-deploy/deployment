@@ -16,8 +16,11 @@ jobs:
   deploy:
     name: Production Deploy
     runs-on: self-hosted
-    environment: 
+    environment:
       name: production
+    permissions:
+      contents: read
+      security-events: write
     env:
       OS_AUTH_URL: ${{ secrets.PRODUCTION_OS_AUTH_URL }}
       OS_APPLICATION_CREDENTIAL_ID: ${{ secrets.PRODUCTION_OS_APPLICATION_CREDENTIAL_ID }}
@@ -37,13 +40,29 @@ jobs:
         working-directory: infrastructure/terraform
         run: terraform fmt -check -recursive
 
-      - name: Terraform Security Scan (Trivy)
-        # Non-blocking for now: surfaces HIGH/CRITICAL IaC findings without
-        # failing the deploy. Flip to blocking by removing continue-on-error.
-        continue-on-error: true
+      - name: Install Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
-          trivy config --severity HIGH,CRITICAL infrastructure/terraform
+
+      # Production gate — HIGH/CRITICAL IaC findings block the deploy.
+      # Whitelist false positives in `.trivyignore` with a comment.
+      - name: Terraform Security Scan (Trivy, gate)
+        run: |
+          trivy config --severity HIGH,CRITICAL --exit-code 1 infrastructure/terraform
+
+      # Second pass emits SARIF so ALL findings (incl. ignored ones) end
+      # up in the Security tab, separate from the blocking gate above.
+      - name: Terraform Security Scan (Trivy, SARIF)
+        if: always()
+        run: |
+          trivy config --severity HIGH,CRITICAL --format sarif --output trivy-iac.sarif infrastructure/terraform
+
+      - name: Upload Trivy IaC results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-iac.sarif
+          category: trivy-iac-production
 
       - name: Set up SSH Key
         env:
