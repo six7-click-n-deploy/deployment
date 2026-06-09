@@ -90,6 +90,24 @@
         state: present
       register: compose_output
 
+    # Migrations live OUTSIDE the compose file on purpose: a previous
+    # backend-migrate init container buried failure stderr inside the
+    # compose JSON. Running alembic as its own playbook step surfaces
+    # both the migration's exit code and its stderr directly in the
+    # Ansible task output.
+    - name: Wait for backend container to be running
+      ansible.builtin.command: docker inspect -f '{% raw %}{{.State.Running}}{% endraw %}' backend-prod
+      register: backend_running
+      until: backend_running.stdout == "true"
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: Apply database migrations
+      ansible.builtin.command: docker exec backend-prod python -m alembic upgrade head
+      register: migration_result
+      changed_when: "'Running upgrade' in migration_result.stdout"
+
     - name: Status der Deployment anzeigen
       ansible.builtin.debug:
         var: compose_output

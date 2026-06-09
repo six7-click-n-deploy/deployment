@@ -1,6 +1,13 @@
 # ================================================================
 # Makefile for Multi-Repo Deployment
 # Manages frontend, backend, worker services
+#
+# This Makefile drives the LOCAL development environment
+# (docker-compose.dev.yml). The production stack
+# (docker-compose.deploy.yml) is deployed exclusively via the
+# Ansible CD pipeline (infrastructure/ansible/) — there are no
+# local prod-* targets, on purpose: prod is reproduced from the
+# pipeline, not from a developer laptop.
 # ================================================================
 
 .PHONY: help build up down logs shell migrate test clean
@@ -87,55 +94,13 @@ dev-ps: ## List development containers
 	docker compose -f docker-compose.dev.yml ps
 
 # ----------------------------------------------------------------
-# Production Environment
-# ----------------------------------------------------------------
-prod-up: ## Start production environment
-	docker compose -f docker-compose.prod.yml up -d
-	@echo "✓ Production environment started"
-
-prod-down: ## Stop production environment
-	docker compose -f docker-compose.prod.yml down
-
-prod-restart: ## Restart production environment
-	docker compose -f docker-compose.prod.yml restart
-
-prod-logs: ## View production logs (all services)
-	docker compose -f docker-compose.prod.yml logs -f
-
-prod-logs-backend: ## View backend logs only
-	docker compose -f docker-compose.prod.yml logs -f backend
-
-prod-logs-frontend: ## View frontend logs only
-	docker compose -f docker-compose.prod.yml logs -f frontend
-
-prod-logs-worker: ## View worker logs only
-	docker compose -f docker-compose.prod.yml logs -f worker
-
-prod-pull: ## Pull latest production images
-	docker compose -f docker-compose.prod.yml pull
-
-prod-ps: ## List production containers
-	docker compose -f docker-compose.prod.yml ps
-
-prod-update: ## Update production (pull + restart)
-	docker compose -f docker-compose.prod.yml pull
-	docker compose -f docker-compose.prod.yml up -d
-	@echo "✓ Production environment updated"
-
-# ----------------------------------------------------------------
 # Shell Access
 # ----------------------------------------------------------------
 shell-backend: ## Open shell in backend container (dev)
 	docker compose -f docker-compose.dev.yml exec backend bash
 
-shell-backend-prod: ## Open shell in backend container (prod)
-	docker compose -f docker-compose.prod.yml exec backend bash
-
 shell-worker: ## Open shell in worker container (dev)
 	docker compose -f docker-compose.dev.yml exec worker bash
-
-shell-worker-prod: ## Open shell in worker container (prod)
-	docker compose -f docker-compose.prod.yml exec worker bash
 
 shell-frontend: ## Open shell in frontend container (dev)
 	docker compose -f docker-compose.dev.yml exec frontend sh
@@ -143,14 +108,8 @@ shell-frontend: ## Open shell in frontend container (dev)
 shell-db: ## Open PostgreSQL shell (dev)
 	docker compose -f docker-compose.dev.yml exec postgres psql -U postgres -d backend_dev
 
-shell-db-prod: ## Open PostgreSQL shell (prod)
-	docker compose -f docker-compose.prod.yml exec postgres psql -U postgres
-
 shell-redis: ## Open Redis CLI (dev)
 	docker compose -f docker-compose.dev.yml exec redis redis-cli
-
-shell-redis-prod: ## Open Redis CLI (prod)
-	docker compose -f docker-compose.prod.yml exec redis redis-cli
 
 shell-keycloak: ## Open shell in Keycloak container (dev)
 	docker compose -f docker-compose.dev.yml exec keycloak bash
@@ -228,11 +187,11 @@ keycloak-url: ## Show Keycloak URLs
 # ----------------------------------------------------------------
 # Database Migrations
 # ----------------------------------------------------------------
+# Production migrations run automatically as a step in the Ansible
+# CD pipeline (infrastructure/ansible/deploy_*.yml) — there is no
+# local migrate-prod target, on purpose.
 migrate-dev: ## Run database migrations (dev)
 	docker compose -f docker-compose.dev.yml exec backend poetry run alembic upgrade head
-
-migrate-prod: ## Run database migrations (prod)
-	docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
 
 migration-create: ## Create new migration (dev, usage: make migration-create MSG="message")
 	@if [ -z "$(MSG)" ]; then \
@@ -253,17 +212,6 @@ migration-downgrade: ## Downgrade one migration (dev)
 # ----------------------------------------------------------------
 # Database Management
 # ----------------------------------------------------------------
-db-backup: ## Backup database (prod)
-	docker compose -f docker-compose.prod.yml exec postgres pg_dump -U postgres > backup_$(shell date +%Y%m%d_%H%M%S).sql
-	@echo "✓ Database backed up"
-
-db-restore: ## Restore database (prod, usage: make db-restore FILE=backup.sql)
-	@if [ -z "$(FILE)" ]; then \
-		echo "Error: Please provide a backup file. Usage: make db-restore FILE=backup.sql"; \
-		exit 1; \
-	fi
-	docker compose -f docker-compose.prod.yml exec -T postgres psql -U postgres < $(FILE)
-
 db-reset-dev: ## Reset development database (⚠️ WARNING: Deletes all data!)
 	@echo "⚠️  WARNING: This will delete all development database data!"
 	@read -p "Are you sure? [y/N] " -n 1 -r; \
@@ -291,16 +239,8 @@ health: ## Check all service health (dev)
 	@curl -sf http://localhost:3000 > /dev/null && echo "  ✓ Frontend healthy" || echo "  ❌ Frontend not healthy"
 	@echo ""
 
-health-prod: ## Check all service health (prod)
-	@echo "🏥 Checking production service health..."
-	@echo ""
-	@docker compose -f docker-compose.prod.yml ps
-
 status: ## Show container status (dev)
 	docker compose -f docker-compose.dev.yml ps
-
-status-prod: ## Show container status (prod)
-	docker compose -f docker-compose.prod.yml ps
 
 # ----------------------------------------------------------------
 # Monitoring
@@ -311,14 +251,8 @@ stats: ## Show container resource usage (dev)
 watch-dev: ## Watch development logs in real-time
 	watch -n 2 'docker compose -f docker-compose.dev.yml ps'
 
-watch-prod: ## Watch production logs in real-time
-	watch -n 2 'docker compose -f docker-compose.prod.yml ps'
-
 top: ## Show top processes in containers (dev)
 	docker compose -f docker-compose.dev.yml top
-
-top-prod: ## Show top processes in containers (prod)
-	docker compose -f docker-compose.prod.yml top
 
 # ----------------------------------------------------------------
 # Cleanup
@@ -327,13 +261,8 @@ clean-dev: ## Remove all dev containers and volumes
 	docker compose -f docker-compose.dev.yml down -v
 	@echo "✓ Development cleanup complete"
 
-clean-prod: ## Remove all prod containers (keeps volumes!)
-	docker compose -f docker-compose.prod.yml down
-	@echo "✓ Production cleanup complete"
-
 clean-all: ## Remove everything (⚠️ WARNING: Deletes all data!)
 	docker compose -f docker-compose.dev.yml down -v --rmi local
-	docker compose -f docker-compose.prod.yml down -v
 	@echo "✓ Complete cleanup done"
 
 prune: ## Remove unused Docker resources
@@ -369,15 +298,6 @@ restart-frontend: ## Restart frontend service (dev)
 
 restart-worker: ## Restart worker service (dev)
 	docker compose -f docker-compose.dev.yml restart worker
-
-restart-backend-prod: ## Restart backend service (prod)
-	docker compose -f docker-compose.prod.yml restart backend
-
-restart-frontend-prod: ## Restart frontend service (prod)
-	docker compose -f docker-compose.prod.yml restart frontend
-
-restart-worker-prod: ## Restart worker service (prod)
-	docker compose -f docker-compose.prod.yml restart worker
 
 # ----------------------------------------------------------------
 # Quick Commands
