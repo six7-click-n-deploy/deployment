@@ -9,8 +9,7 @@ deployment/
 ├── LICENSE                   # Lizenzdatei
 ├── Makefile                  # Orchestrierung Befehle
 ├── README.md                 # Diese Datei
-├── docker-compose.dev.yml    # Entwicklungsumgebung
-├── docker-compose.prod.yml   # Produktivumgebung (Makefile prod-* Targets)
+├── docker-compose.dev.yml    # Entwicklungsumgebung (lokal, Hot-Reload)
 ├── docker-compose.deploy.yml # Server-Deployment (vollständiger Stack, Ansible: staging + prod)
 ├── docker-compose.staging.yml# Staging-Override (tauscht Keycloak-Realm gegen Test-User-Realm)
 ├── .env.example              # Environment Vorlage
@@ -100,36 +99,30 @@ Kurzübersicht (häufig genutzte Targets)
 - `make dev-rebuild` : Rebuild (no-cache) und neu starten der Dev‑Umgebung.
 - `make dev-ps` : Liste der Dev‑Container.
 
-- `make prod-up` / `make prod-down` : Start/Stop der Produktions‑Compose.
-- `make prod-pull` : Pull aller Production‑Images.
-- `make prod-update` : Pull + Restart der Production‑Services.
-- `make prod-logs` / `make prod-logs-backend` / `make prod-logs-frontend` / `make prod-logs-worker` : Produktions‑Logs.
-
 - `make shell-backend` / `make shell-worker` / `make shell-frontend` : Öffnet eine Shell im jeweiligen Dev‑Container.
 - `make shell-db` : Öffnet eine `psql`‑Shell gegen die Dev‑Postgres.
 - `make shell-keycloak` / `make shell-keycloak-db` : Keycloak Shell bzw. Keycloak‑DB Shell.
 
-- `make migrate-dev` / `make migrate-prod` : Führe Alembic‑Migrations aus (Dev / Prod).
+- `make migrate-dev` : Führt Alembic‑Migrations im Dev‑Stack aus.
 - `make migration-create MSG="..."` : Erzeuge neue Migration mit Message.
 - `make migration-history` / `make migration-current` / `make migration-downgrade` : Migrationstools.
 
-- `make db-backup` / `make db-restore FILE=...` : Backup/Restore für Prod‑DB.
 - `make db-reset-dev` : Setzt die Dev‑DB zurück (WARNUNG: löscht Daten).
 
 - `make keycloak-up` / `make keycloak-down` / `make keycloak-restart` : Keycloak im Dev starten/stoppen.
 - `make keycloak-export` : Exportiert den Realm (z.B. `dhbw`) nach `keycloak/keycloak-export.json`.
 - `make keycloak-token USER=... PASS=...` / `make keycloak-userinfo TOKEN=...` : Token und Userinfo Commands.
 
-- `make health` / `make health-prod` : Einfache Health‑Checks (Dev / Prod).
-- `make status` / `make status-prod` : Zeigt Container‑Status (Dev / Prod).
+- `make health` : Einfacher Health‑Check der Dev‑Services.
+- `make status` : Zeigt Container‑Status der Dev‑Umgebung.
 
 - `make stats` : `docker stats` für laufende Container.
-- `make watch-dev` / `make watch-prod` : Beobachtet Container‑Status in Intervallen.
+- `make watch-dev` : Beobachtet Container‑Status in Intervallen.
 
 - `make test-backend` / `make test-backend-cov` : Backend‑Tests (mit Coverage).
 - `make lint-backend` / `make lint-backend-fix` / `make format-backend` : Linting / Formatierung.
 
-- `make clean-dev` / `make clean-prod` / `make clean-all` : Aufräum‑Targets (löschen Container/Volumes).
+- `make clean-dev` / `make clean-all` : Aufräum‑Targets (löschen Container/Volumes).
 - `make prune` : Docker System Cleanup (entfernt ungenutzte Ressourcen).
 
 - `make restart-backend` / `make restart-frontend` / `make restart-worker` : Neustart einzelner Dev‑Services.
@@ -141,3 +134,12 @@ Kurzübersicht (häufig genutzte Targets)
     - `make build` → `make dev-build`
 
 Wenn du ein spezifisches Target suchst, nutze `make help` — die Ausgabe listet alle Targets mit ihren Beschreibungen.
+
+## Produktions-Deployment
+
+Staging und Production werden ausschließlich über die Ansible CD‑Pipeline
+(`infrastructure/ansible/deploy_{staging,production}.yml`) deployt — es gibt
+**keine** lokalen `prod-*` Make‑Targets. Die Pipeline lädt Images aus GHCR,
+fährt `docker-compose.deploy.yml` hoch und führt Alembic‑Migrationen direkt
+nach `compose up` als eigenen Schritt aus, sodass Migrations‑Failures sofort
+im Action‑Log sichtbar sind statt im Compose‑Output zu verschwinden.
