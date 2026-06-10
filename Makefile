@@ -54,6 +54,12 @@ dev-down: ## Stop development environment
 dev-restart: ## Restart development environment
 	docker compose -f docker-compose.dev.yml restart
 
+dev-restart-worker: ## Restart worker only (use after editing worker/app/tasks.py if not using watchmedo)
+	docker compose -f docker-compose.dev.yml restart worker
+
+dev-restart-backend: ## Restart backend only (use after editing backend/app/celery_app.py)
+	docker compose -f docker-compose.dev.yml restart backend
+
 dev-logs: ## View development logs (all services)
 	docker compose -f docker-compose.dev.yml logs -f
 
