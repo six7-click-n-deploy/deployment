@@ -29,6 +29,35 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------------------------
+  # PostgreSQL Database (Backend Tests — Isolated)
+  # ----------------------------------------------------------------
+  # Dedicated Postgres for the backend test suite. The suite calls
+  # Base.metadata.drop_all() on tear-down, which would wipe the dev DB
+  # if we pointed tests at `postgres`. This service lives on its own
+  # volume and exposes a distinct host port (55433) so tests run via
+  # `TEST_DATABASE_URL=postgresql://...@localhost:55433/...` in parallel
+  # with a live dev environment.
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: postgres-test-dev
+    environment:
+      POSTGRES_USER: ${TEST_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${TEST_DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${TEST_DB_NAME:-backend_test}
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    ports:
+      - "${TEST_DB_PORT:-55433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEST_DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
   # PostgreSQL Database (Terraform Remote State)
   # ----------------------------------------------------------------
   # Worker-only Postgres for Terraform's `pg` backend. Deliberately
@@ -326,6 +355,8 @@ services:
 # ----------------------------------------------------------------
 volumes:
   postgres_dev_data:
+    driver: local
+  postgres_test_data:
     driver: local
   postgres_tfstate_data:
     driver: local
