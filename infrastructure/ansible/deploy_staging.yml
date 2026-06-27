@@ -54,6 +54,26 @@
         group: ubuntu
         mode: '0600'
 
+    - name: APP_BASE_URL aus .env lesen
+      ansible.builtin.shell:
+        cmd: |
+          grep -E '^APP_BASE_URL=' "{{ project_root }}/.env" \
+            | head -n1 | cut -d= -f2- | tr -d '"'"'"'\r'
+        executable: /bin/bash
+      register: app_base_url_raw
+      changed_when: false
+
+    - name: Keycloak realm-export.json aus Template rendern
+      ansible.builtin.template:
+        src: "{{ local_compose_path }}/keycloak/realm-export.json.j2"
+        dest: "{{ project_root }}/keycloak/realm-export.json"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+      vars:
+        app_base_url: "{{ app_base_url_raw.stdout | trim }}"
+        app_api_url: "{{ app_base_url_raw.stdout | trim | regex_replace(':[0-9]+$', ':8000') }}"
+
     - name: Log in to GHCR using credentials from the deployed .env
       ansible.builtin.shell:
         cmd: |
