@@ -33,13 +33,16 @@ Oder einfacher via Makefile: ``make seed-data``.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable
 
 from keycloak import KeycloakAdmin
+from keycloak.exceptions import KeycloakGetError
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -66,6 +69,18 @@ KEYCLOAK_ADMIN_PASSWORD = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin")
 
 DEFAULT_PASSWORD = "1234"
 EMAIL_DOMAIN = "dhbw.de"
+
+# Optionaler Pfad zur Realm-Export-Datei. Wenn der Realm noch nicht
+# existiert, importieren wir ihn von hier; danach läuft das normale
+# Seeding. In den Backend-Container reicht der Default-Pfad via
+# Bind-Mount des deployment-Verzeichnisses meist nicht, deshalb kann
+# das Makefile die Datei zusätzlich nach ``/tmp/realm-export.json``
+# kopieren — wir suchen an beiden Stellen.
+REALM_EXPORT_CANDIDATES = [
+    Path(os.environ.get("REALM_EXPORT_PATH", "/tmp/realm-export.json")),
+    Path("/deployment/keycloak/realm-export.json"),
+    Path(__file__).parent.parent / "keycloak" / "realm-export.json",
+]
 
 
 # ----------------------------------------------------------------
@@ -418,9 +433,14 @@ APPS: list[SeedApp] = [
 # ----------------------------------------------------------------
 # Keycloak-Helpers
 # ----------------------------------------------------------------
-def _kc_admin() -> KeycloakAdmin:
-    """Login als Master-Realm Admin, dann auf den Ziel-Realm wechseln."""
-    kc = KeycloakAdmin(
+def _kc_master_admin() -> KeycloakAdmin:
+    """Login als Master-Realm Admin, Working-Realm = master.
+
+    Wird gebraucht, um *neue* Realms anzulegen — das geht nur von der
+    master-Realm aus. Für das eigentliche User-Seeding verwenden wir
+    ``_kc_admin()``, der auf den Ziel-Realm umschaltet.
+    """
+    return KeycloakAdmin(
         server_url=KEYCLOAK_URL,
         username=KEYCLOAK_ADMIN_USER,
         password=KEYCLOAK_ADMIN_PASSWORD,
@@ -428,7 +448,77 @@ def _kc_admin() -> KeycloakAdmin:
         user_realm_name="master",
         verify=True,
     )
-    kc.connection.realm_name = KEYCLOAK_REALM
+
+
+def _ensure_realm_exists() -> None:
+    """Importiert den ``dhbw``-Realm, falls er noch nicht existiert.
+
+    Das Keycloak-Setup in der Compose-Datei macht *keinen* Auto-Import
+    (kein ``--import-realm`` und kein Bind-Mount auf
+    ``/opt/keycloak/data/import``). Damit ein frisches Volume direkt
+    nutzbar ist, lädt das Skript hier den Realm-Export selber rein.
+
+    Die Datei wird in dieser Reihenfolge gesucht:
+
+    * ``$REALM_EXPORT_PATH`` (von außen settbar)
+    * ``/tmp/realm-export.json`` (vom Makefile dahin kopiert)
+    * ``/deployment/keycloak/realm-export.json`` (Bind-Mount)
+    * Pfad relativ zu diesem Skript (falls lokal ausgeführt)
+    """
+    master = _kc_master_admin()
+    try:
+        master.get_realm(KEYCLOAK_REALM)
+        logger.info("Realm '%s' existiert bereits.", KEYCLOAK_REALM)
+        return
+    except KeycloakGetError as exc:
+        if "404" not in str(exc) and "not found" not in str(exc).lower():
+            raise
+        logger.info("Realm '%s' fehlt — importiere aus Export-Datei.", KEYCLOAK_REALM)
+
+    export_path = next((p for p in REALM_EXPORT_CANDIDATES if p.is_file()), None)
+    if export_path is None:
+        searched = "\n  ".join(str(p) for p in REALM_EXPORT_CANDIDATES)
+        raise FileNotFoundError(
+            f"Realm '{KEYCLOAK_REALM}' fehlt in Keycloak und keine Export-Datei "
+            f"gefunden. Gesucht in:\n  {searched}\n"
+            f"Lege den Export an einer dieser Stellen ab oder setze "
+            f"REALM_EXPORT_PATH."
+        )
+
+    payload = json.loads(export_path.read_text())
+    # Sicherheitshalber den Realm-Namen erzwingen — falls jemand die
+    # Datei umbenannt hat, würde python-keycloak sonst kommentarlos
+    # einen anderen Realm importieren.
+    payload["realm"] = KEYCLOAK_REALM
+    master.create_realm(payload=payload, skip_exists=True)
+    logger.info("Realm '%s' importiert (Quelle: %s).", KEYCLOAK_REALM, export_path)
+
+
+def _kc_admin() -> KeycloakAdmin:
+    """Login als Master-Realm Admin, dann auf den Ziel-Realm wechseln.
+
+    python-keycloak benutzt zwei verschiedene Attribute:
+    * ``user_realm_name`` — wohin geloggt wird (hier: ``master``)
+    * ``realm_name`` — auf welchem Realm die Admin-Operationen laufen
+      (hier: ``dhbw``)
+    Wenn man nur ``connection.realm_name`` schreibt, hängen die Calls
+    am falschen Realm und Keycloak antwortet mit 404.
+    """
+    kc = KeycloakAdmin(
+        server_url=KEYCLOAK_URL,
+        username=KEYCLOAK_ADMIN_USER,
+        password=KEYCLOAK_ADMIN_PASSWORD,
+        realm_name=KEYCLOAK_REALM,
+        user_realm_name="master",
+        verify=True,
+    )
+    # Defensive — falls eine neuere python-keycloak-Version den
+    # Konstruktor anders interpretiert, setzen wir den Working-Realm
+    # explizit nochmal.
+    try:
+        kc.change_current_realm(KEYCLOAK_REALM)
+    except AttributeError:
+        kc.realm_name = KEYCLOAK_REALM
     return kc
 
 
@@ -614,6 +704,7 @@ def _ensure_version(
 # ----------------------------------------------------------------
 def seed() -> None:
     logger.info("→ Keycloak: %s, Realm: %s", KEYCLOAK_URL, KEYCLOAK_REALM)
+    _ensure_realm_exists()
     kc = _kc_admin()
 
     # 1) Keycloak-User

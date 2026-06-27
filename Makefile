@@ -336,13 +336,15 @@ keycloak-url: ## Print Keycloak URLs
 #
 # Voraussetzung: ``make dev-up`` lief (Backend + Keycloak gesund).
 seed-data: ## Seed Keycloak users + DB (courses, apps, approvals)
-	@echo "📥 Kopiere Seed-Skript in den Backend-Container..."
+	@echo "📥 Kopiere Seed-Skript + Realm-Export in den Backend-Container..."
 	$(DC_DEV) cp ./seed/seed_data.py backend:/tmp/seed_data.py
+	$(DC_DEV) cp ./keycloak/realm-export.json backend:/tmp/realm-export.json
 	@echo "🌱 Führe Seed aus..."
 	$(DC_DEV) exec -T \
 		-e KEYCLOAK_ADMIN_USER=$${KEYCLOAK_ADMIN_USER:-admin} \
 		-e KEYCLOAK_ADMIN_PASSWORD=$${KEYCLOAK_ADMIN_PASSWORD:-admin} \
-		backend python /tmp/seed_data.py
+		-e REALM_EXPORT_PATH=/tmp/realm-export.json \
+		backend poetry run python /tmp/seed_data.py
 
 seed-reset: ## ⚠️  Reset DB + Keycloak realm, then seed
 	@echo "⚠️  WARNING: This will reset the dev DB AND the Keycloak realm!"
