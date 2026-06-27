@@ -54,6 +54,26 @@
         group: ubuntu
         mode: '0600'
 
+    - name: APP_BASE_URL aus .env lesen
+      ansible.builtin.shell:
+        cmd: |
+          grep -E '^APP_BASE_URL=' "{{ project_root }}/.env" \
+            | head -n1 | cut -d= -f2- | tr -d '"'"'"'\r'
+        executable: /bin/bash
+      register: app_base_url_raw
+      changed_when: false
+
+    - name: Keycloak realm-export.json aus Template rendern
+      ansible.builtin.template:
+        src: "{{ local_compose_path }}/keycloak/realm-export.json.j2"
+        dest: "{{ project_root }}/keycloak/realm-export.json"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+      vars:
+        app_base_url: "{{ app_base_url_raw.stdout | trim }}"
+        app_api_url: "{{ app_base_url_raw.stdout | trim | regex_replace(':[0-9]+$', ':8000') }}"
+
     - name: Log in to GHCR using credentials from the deployed .env
       ansible.builtin.shell:
         cmd: |
@@ -89,6 +109,24 @@
         pull: never
         state: present
       register: compose_output
+
+    # Migrations live OUTSIDE the compose file on purpose: a previous
+    # backend-migrate init container buried failure stderr inside the
+    # compose JSON. Running alembic as its own playbook step surfaces
+    # both the migration's exit code and its stderr directly in the
+    # Ansible task output.
+    - name: Wait for backend container to be running
+      ansible.builtin.command: docker inspect -f '{% raw %}{{.State.Running}}{% endraw %}' backend-prod
+      register: backend_running
+      until: backend_running.stdout == "true"
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: Apply database migrations
+      ansible.builtin.command: docker exec backend-prod python -m alembic upgrade head
+      register: migration_result
+      changed_when: "'Running upgrade' in migration_result.stdout"
 
     - name: Status der Deployment anzeigen
       ansible.builtin.debug:

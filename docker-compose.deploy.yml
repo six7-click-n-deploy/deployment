@@ -1,14 +1,31 @@
 # ================================================================
 # Server deployment stack (staging / prod VM) — STANDALONE.
 #
-# Pulls pre-built images from GitHub Container Registry and runs the full
-# stack: postgres, rabbitmq, redis, keycloak (+ its postgres), backend
-# (+ migrate init), worker, frontend.
+# Pulls pre-built images from GHCR and runs the full stack:
+# postgres (app DB), postgres-tfstate (Terraform state), keycloak
+# (+ its postgres), rabbitmq, redis, backend, worker, frontend.
 #
 #   docker compose -f docker-compose.deploy.yml up -d
 #
-# Staging layers docker-compose.staging.yml on top to swap the Keycloak
-# realm-import file (test users); production uses this file alone.
+# DB migrations are NOT part of this compose file — the Ansible
+# playbook runs `docker exec backend-prod python -m alembic upgrade
+# head` after the stack is up so failures land in the playbook log
+# instead of being buried in compose output.
+#
+# This file mirrors docker-compose.dev.yml service-for-service.
+# Differences vs dev:
+#   - Pulls GHCR images instead of building locally.
+#   - Source-mount and ssh-key-mount removed (prod uses GIT_ACCESS_TOKEN).
+#   - pgadmin removed.
+#   - Required env vars use ${VAR:?required} so a missing .env on the
+#     VM stops compose-up immediately (e.g. SECRET_KEY, APP_BASE_URL,
+#     CORS_ORIGINS — vars that have unsafe localhost / dev defaults
+#     in dev.yml).
+#   - Adds resource limits and json-file log rotation per service.
+#
+# Staging layers docker-compose.staging.yml on top to swap the
+# Keycloak realm-import file (test users); production uses this
+# file alone.
 # ================================================================
 services:
   # ----------------------------------------------------------------
@@ -18,9 +35,9 @@ services:
     image: postgres:16-alpine
     container_name: postgres-prod
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER:?DB_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:?DB_NAME is required}
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
     ports:
@@ -44,6 +61,95 @@ services:
           memory: 512M
 
   # ----------------------------------------------------------------
+  # PostgreSQL Database (Terraform Remote State)
+  # ----------------------------------------------------------------
+  # Worker-only Postgres for Terraform's `pg` backend. Deliberately
+  # isolated from the application DB: the worker must never reach
+  # the backend's data, only its own state store. One schema per
+  # deployment (`deployment_<uuid>`) keeps the locking/state surface
+  # tight. Not exposed on the host — internal to worker-network.
+  postgres-tfstate:
+    image: postgres:16-alpine
+    container_name: postgres-tfstate-prod
+    environment:
+      POSTGRES_USER: ${TFSTATE_DB_USER:?TFSTATE_DB_USER is required}
+      POSTGRES_PASSWORD: ${TFSTATE_DB_PASSWORD:?TFSTATE_DB_PASSWORD is required}
+      POSTGRES_DB: ${TFSTATE_DB_NAME:?TFSTATE_DB_NAME is required}
+    volumes:
+      - postgres_tfstate_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TFSTATE_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - worker-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ----------------------------------------------------------------
+  # Keycloak database
+  # ----------------------------------------------------------------
+  keycloak-postgres:
+    image: postgres:16-alpine
+    container_name: keycloak-postgres-prod
+    environment:
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:?KEYCLOAK_DB_USER is required}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?KEYCLOAK_DB_PASSWORD is required}
+      POSTGRES_DB: ${KEYCLOAK_DB_NAME:?KEYCLOAK_DB_NAME is required}
+    volumes:
+      - keycloak_postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - keycloak-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # Keycloak (Identity Provider)
+  # ----------------------------------------------------------------
+  # Imports the `dhbw` realm from keycloak/realm-export.json on first
+  # boot (skipped once the realm exists in the persistent DB volume).
+  #
+  # NOTE: uses start-dev (HTTP, no hostname enforcement) — fine for a
+  # staging VM reached over http://<ip>:8080. For real production
+  # behind TLS, switch to `start` and set KC_HOSTNAME to the public URL.
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: keycloak-prod
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/${KEYCLOAK_DB_NAME}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:?KEYCLOAK_ADMIN_USER is required}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD is required}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    networks:
+      - keycloak-network
+      - backend-network
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------
   # RabbitMQ (Celery broker)
   # ----------------------------------------------------------------
   rabbitmq:
@@ -51,8 +157,8 @@ services:
     container_name: rabbitmq-prod
     hostname: rabbitmq-prod
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
     ports:
       - "${RABBITMQ_PORT:-5672}:5672"
@@ -97,102 +203,31 @@ services:
     restart: unless-stopped
 
   # ----------------------------------------------------------------
-  # Keycloak database
-  # ----------------------------------------------------------------
-  keycloak-postgres:
-    image: postgres:16-alpine
-    container_name: keycloak-postgres-prod
-    environment:
-      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
-      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
-      POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
-    volumes:
-      - keycloak_postgres_prod_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER:-keycloak}"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    networks:
-      - keycloak-network
-    restart: unless-stopped
-
-  # ----------------------------------------------------------------
-  # Keycloak (Identity Provider)
-  # Imports the `dhbw` realm from keycloak/realm-export.json on first boot
-  # (skipped once the realm exists in the persistent DB volume).
-  #
-  # NOTE: uses start-dev (HTTP, no hostname enforcement) — fine for a
-  # staging VM reached over http://<ip>:8080. For real production behind
-  # TLS, switch to `start` and set KC_HOSTNAME to the public URL.
-  # ----------------------------------------------------------------
-  keycloak:
-    image: quay.io/keycloak/keycloak:23.0
-    container_name: keycloak-prod
-    command: ["start-dev", "--import-realm"]
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/${KEYCLOAK_DB_NAME:-keycloak}
-      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
-      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-      KC_HOSTNAME_STRICT: "false"
-      KC_HTTP_ENABLED: "true"
-    volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
-    ports:
-      - "${KEYCLOAK_PORT:-8080}:8080"
-    depends_on:
-      keycloak-postgres:
-        condition: service_healthy
-    networks:
-      - keycloak-network
-      - backend-network
-    restart: unless-stopped
-
-  # ----------------------------------------------------------------
-  # Backend Migration Init Container
-  # ----------------------------------------------------------------
-  backend-migrate:
-    image: ghcr.io/six7-click-n-deploy/backend:${BACKEND_VERSION:-latest}
-    container_name: backend-migrate
-    # The prod image ships the alembic Python module but not the bin/alembic
-    # console script, so invoke it via `python -m alembic` (the bare `alembic`
-    # exec fails with "no such file or directory").
-    command: ["python", "-m", "alembic", "upgrade", "head"]
-    environment:
-      # Database
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-
-      # Security
-      SECRET_KEY: ${SECRET_KEY}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - backend-network
-    restart: "no"
-
-  # ----------------------------------------------------------------
   # Backend API (FastAPI)
   # ----------------------------------------------------------------
+  # Migrations are applied by the Ansible playbook AFTER compose-up
+  # (`docker exec backend-prod python -m alembic upgrade head`). Do
+  # not re-introduce a backend-migrate init-container here — that
+  # pattern hides migration failures inside the compose output.
   backend:
     image: ghcr.io/six7-click-n-deploy/backend:${BACKEND_VERSION:-latest}
     container_name: backend-prod
-    # Same image issue as backend-migrate: the venv's console scripts (uvicorn,
-    # alembic) carry a build-time shebang (#!/build/.venv/bin/python) that doesn't
-    # exist at runtime, so the bare `uvicorn` exec fails with "no such file or
-    # directory". Run via `python -m uvicorn` to bypass the broken script shebang.
+    # The backend image's venv is built at /build/.venv and copied to
+    # /app/.venv, so the console scripts (`uvicorn`, `alembic`) carry a
+    # stale build-time shebang (#!/build/.venv/bin/python) that doesn't
+    # resolve at runtime. Invoke via `python -m` to bypass the broken
+    # script. The Ansible playbook does the same for `alembic upgrade
+    # head` after compose-up.
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]
     environment:
       # Database
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
 
       # Security
-      SECRET_KEY: ${SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ALGORITHM: ${ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
 
       # Celery (broker = RabbitMQ, result backend = Redis)
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
@@ -202,14 +237,14 @@ services:
       KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://keycloak:8080}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-dhbw}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-appstore-backend}
-      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required}
       KEYCLOAK_ENABLED: ${KEYCLOAK_ENABLED:-true}
 
       # Git
-      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:?GIT_ACCESS_TOKEN is required}
 
       # CORS
-      CORS_ORIGINS: ${CORS_ORIGINS}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
 
       # Email (Gmail SMTP) — used by the post-deploy notify hook in
       # celery_event_listener.py. Leave SMTP_USER empty to disable
@@ -223,7 +258,7 @@ services:
 
       # Public base URL of the frontend, used in owner-summary mails
       # to deep-link back to the deployment detail page.
-      APP_BASE_URL: ${APP_BASE_URL}
+      APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL is required}
 
       # Application
       DEBUG: "False"
@@ -245,8 +280,6 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_started
-      backend-migrate:
-        condition: service_completed_successfully
     volumes:
       - backend_git_repos:/tmp/repos
     healthcheck:
@@ -276,29 +309,35 @@ services:
   # ----------------------------------------------------------------
   # Worker Service (Celery)
   # ----------------------------------------------------------------
+  # Worker has NO access to the application DB — it only talks to
+  # RabbitMQ/Redis (Celery) and postgres-tfstate (Terraform state).
   worker:
     image: ghcr.io/six7-click-n-deploy/worker:${WORKER_VERSION:-latest}
     container_name: worker-prod
     environment:
-      # Database
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-
       # Celery (broker = RabbitMQ, result backend = Redis)
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       CELERY_RESULT_BACKEND: redis://redis:6379/0
 
+      # OpenStack credential decryption (must match backend)
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
+
+      # Terraform pg backend — isolated DB, NOT the application DB.
+      # Worker uses one schema per deployment (deployment_<uuid>).
+      TFSTATE_DATABASE_URL: postgresql://${TFSTATE_DB_USER}:${TFSTATE_DB_PASSWORD}@postgres-tfstate:5432/${TFSTATE_DB_NAME}?sslmode=disable
+
       # Git
-      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:-}
+      GIT_ACCESS_TOKEN: ${GIT_ACCESS_TOKEN:?GIT_ACCESS_TOKEN is required}
 
       # Application
       DEBUG: "False"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
-      postgres:
-        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      postgres-tfstate:
         condition: service_healthy
     volumes:
       - worker_git_repos:/tmp/repos
@@ -327,11 +366,11 @@ services:
     container_name: frontend-prod
     environment:
       NODE_ENV: production
-      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://keycloak:8080}
+      VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:?VITE_KEYCLOAK_URL is required}
       VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-dhbw}
       VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-appstore-frontend}
-      VITE_APP_URL: ${VITE_APP_URL}
-      VITE_API_URL: ${VITE_API_URL}
+      VITE_APP_URL: ${VITE_APP_URL:?VITE_APP_URL is required}
+      VITE_API_URL: ${VITE_API_URL:?VITE_API_URL is required}
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     depends_on:
@@ -366,15 +405,17 @@ services:
 volumes:
   postgres_prod_data:
     driver: local
+  postgres_tfstate_prod_data:
+    driver: local
+  keycloak_postgres_prod_data:
+    driver: local
   rabbitmq_prod_data:
+    driver: local
+  redis_prod_data:
     driver: local
   backend_git_repos:
     driver: local
   worker_git_repos:
-    driver: local
-  redis_prod_data:
-    driver: local
-  keycloak_postgres_prod_data:
     driver: local
 
 # ----------------------------------------------------------------
