@@ -140,9 +140,6 @@ services:
       # Tell Keycloak it sits behind a TLS-terminating proxy so it
       # builds HTTPS redirect URIs correctly from X-Forwarded-Proto.
       KC_PROXY: "edge"
-      # nginx proxies /auth/ → keycloak:8080/ — Keycloak must know its
-      # own relative path so it builds correct OIDC discovery/redirect URLs.
-      KC_HTTP_RELATIVE_PATH: "/auth"
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     depends_on:
@@ -238,7 +235,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/0
 
       # Keycloak
-      KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://keycloak:8080/auth}
+      KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://keycloak:8080}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-dhbw}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-appstore-backend}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required}
