@@ -20,7 +20,11 @@ output and writes a small `inventory.ini` that Ansible then deploys onto. The tw
 | Environment | Terraform dir               | Ansible playbook        | Inventory                         | Trigger                          |
 |-------------|-----------------------------|-------------------------|-----------------------------------|----------------------------------|
 | staging     | `terraform/envs/staging`    | `deploy_staging.yml`    | generated `inventory.ini`         | push to `main`                   |
-| production  | `terraform/envs/production` | `deploy_production.yml` | generated `inventory.ini`         | `workflow_dispatch` or `v*` tag  |
+
+> A separate production environment is documented as future work in
+> the project plan but not yet wired into the codebase. The Terraform
+> module is environment-agnostic, so adding `envs/production/` plus a
+> matching playbook is the obvious extension point.
 
 ## Terraform
 
@@ -28,8 +32,7 @@ output and writes a small `inventory.ini` that Ansible then deploys onto. The tw
 terraform/
 ├── modules/openstack_vm/             # reusable VM module (keypair + instance + optional floating IP + optional Cinder data volume)
 └── envs/
-    ├── staging/                      # staging-docker VM (mb1.large)
-    └── production/                   # prod-docker VM (m1.extra_large)
+    └── staging/                      # staging-docker VM (mb1.large)
 ```
 
 Each env dir has:
@@ -58,15 +61,14 @@ Only the **public** key half ever reaches OpenStack/state.
 Run locally:
 
 ```bash
-cd terraform/envs/staging   # or envs/production
+cd terraform/envs/staging
 export TF_VAR_ssh_public_key="$(ssh-keygen -y -f /path/to/deploy_key)"
 terraform init
 terraform apply
 ```
 
 Requires `OS_AUTH_URL`, `OS_APPLICATION_CREDENTIAL_ID`, `OS_APPLICATION_CREDENTIAL_SECRET`,
-`OS_REGION_NAME` in the environment (stored as per-environment GitHub secrets,
-prefixed `STAGING_*` / `PRODUCTION_*`).
+`OS_REGION_NAME` in the environment (stored as `STAGING_*` GitHub secrets).
 
 ### Local state assumption
 
@@ -84,7 +86,6 @@ ansible/
 ├── ansible.cfg                       # roles_path, remote_user=ubuntu, SSH tuning, no host key check, no default inventory
 ├── requirements.yml                  # geerlingguy.docker role + community.docker / ansible.posix collections
 ├── deploy_staging.yml                # configure Docker + deploy (staging)
-├── deploy_production.yml             # configure Docker + deploy (production)
 ├── .gitignore                        # ignores inventory.ini and roles_external/
 ├── inventory.ini                     # GENERATED at deploy time by the workflow (git-ignored / cleaned up)
 └── roles_external/                   # geerlingguy.docker, INSTALLED from Galaxy at deploy time (not vendored, git-ignored)
@@ -105,9 +106,7 @@ created per-run and removed in the workflow's cleanup step.
 
 ### Deploy playbooks
 
-`deploy_staging.yml` and `deploy_production.yml` share the same shape; they differ only in the
-compose `files:` list and a staging-only Template-Seed (see "Staging realm + Template-Seed"
-below). Each one, against the `docker_vm` host:
+`deploy_staging.yml` runs against the `docker_vm` host:
 
 1. Creates `/home/ubuntu/app`.
 2. Applies the `geerlingguy.docker` role (installs Docker + Compose).
@@ -115,15 +114,15 @@ below). Each one, against the `docker_vm` host:
    `.history`, `docker-compose.override.yml`, `node_modules`, `__pycache__`, `.venv`,
    `.terraform`, `frontend/dist`, `frontend/test-results`, `frontend/blob-report`, and
    `model_files` (a carryover exclude — no compose service in this repo references it).
-4. Runs `community.docker.docker_compose_v2` with `pull: always` and an explicit `files:` list of
-   pre-built GHCR images (nothing is built on the VM):
-   - **production:** `docker-compose.deploy.yml` alone — the full standalone stack (postgres,
-     rabbitmq, redis, keycloak + its postgres, backend + migrate, worker, frontend).
-   - **staging:** `docker-compose.deploy.yml` **plus** `docker-compose.staging.yml`, which only
-     swaps the Keycloak realm-import file (see below).
-
-   The explicit `files:` also keeps the local-dev `docker-compose.override.yml` from ever being
-   applied to a server.
+4. Renders `keycloak/realm-export.json.j2` with the public `APP_BASE_URL` so Keycloak redirect
+   URIs match the deployed host.
+5. Generates a self-signed TLS certificate under `nginx/certs/` on first run (idempotent).
+6. Runs `community.docker.docker_compose_v2` with `pull: always` against
+   `docker-compose.deploy.yml` — the full standalone stack (postgres, postgres-tfstate, rabbitmq,
+   redis, keycloak + its postgres, backend, worker, frontend, nginx). The explicit `files:` list
+   keeps the local-dev `docker-compose.override.yml` from ever being applied to a server.
+7. Waits for the backend container, runs Alembic migrations as an explicit task, and reloads
+   nginx as a safety net for bind-mounted config changes.
 
 Run locally (after a `terraform apply`, from the env dir, gives you the IP):
 
@@ -180,7 +179,8 @@ docker compose -f docker-compose.deploy.yml -f docker-compose.staging.yml config
 
 ## CI/CD workflows
 
-Both workflows (`.github/workflows/staging-deploy.yml`, `production-deploy.yml`) follow the same shape so far:
+The staging workflow (`.github/workflows/staging-deploy.yml`) runs on every push to `main` and
+follows this shape:
 
 1. **Checkout**.
 2. **Setup Terraform** (`terraform_wrapper: false`).
@@ -197,21 +197,14 @@ Both workflows (`.github/workflows/staging-deploy.yml`, `production-deploy.yml`)
    pinned `requirements.yml`.
 8. **Generate Ansible Inventory** — writes `inventory.ini` from `VM_IP`.
 9. **Run Ansible playbook** against `inventory.ini`.
-10. **Cleanup** the SSH key + `inventory.ini` (production also wipes `.terraform`).
-
-Differences:
-
-- **Staging** runs automatically on every push to `main`.
-- **Production** runs only on manual `workflow_dispatch` or a `v*` tag push, uses the protected
-  `production` GitHub Environment, and serializes runs via a `production-deploy` concurrency group
-  (`cancel-in-progress: false`).
+10. **Cleanup** the SSH key + `inventory.ini`.
 
 ### Required secrets
 
-Per environment (`STAGING_*` / `PRODUCTION_*`): `OS_AUTH_URL`, `OS_APPLICATION_CREDENTIAL_ID`,
-`OS_APPLICATION_CREDENTIAL_SECRET`, `OS_REGION_NAME`. Shared: `SSH_PRIVATE_KEY` — an
-**unencrypted** private key. Terraform registers its derived public half as the OpenStack
-keypair, so there is no separate "key pair" name to keep in sync.
+`STAGING_OS_AUTH_URL`, `STAGING_OS_APPLICATION_CREDENTIAL_ID`,
+`STAGING_OS_APPLICATION_CREDENTIAL_SECRET`, `STAGING_OS_REGION_NAME`, plus a shared
+`SSH_PRIVATE_KEY` — an **unencrypted** private key. Terraform registers its derived public half as
+the OpenStack keypair, so there is no separate "key pair" name to keep in sync.
 
 ### Notes / follow-ups
 
@@ -223,9 +216,9 @@ keypair, so there is no separate "key pair" name to keep in sync.
 ### Reusing this tooling in another repo
 
 See [`EXTRACT.md`](EXTRACT.md) for a step-by-step recipe to copy the Terraform + Ansible +
-workflows into another app repo: what to copy, what to recreate by hand (GitHub secrets, the
-`production` environment, local state), and the Galaxy-role gotcha (the role is no longer vendored,
-so the destination must install it from `requirements.yml`).
+workflows into another app repo: what to copy, what to recreate by hand (GitHub secrets,
+local state), and the Galaxy-role gotcha (the role is no longer vendored, so the destination
+must install it from `requirements.yml`).
 
 ### Deployment using act
 
@@ -233,7 +226,6 @@ Temporary solution while there is no remote state backend using [act](https://gi
 
 ```bash
 act -W .github/workflows/staging-deploy.yml --bind --secret-file .secrets
-act -W .github/workflows/production-deploy.yml --bind --secret-file .secrets
 ```
 
 With `--bind`, the container writes directly to your host directory, so `terraform.tfstate` lands

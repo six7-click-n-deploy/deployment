@@ -35,8 +35,7 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
       # Staging is intentionally non-blocking: surfaces HIGH/CRITICAL IaC
-      # findings without halting deploys. Production mirrors this scan
-      # but blocks on findings (see production-deploy.yml).
+      # findings without halting deploys.
       - name: Terraform Security Scan (Trivy)
         continue-on-error: true
         run: |

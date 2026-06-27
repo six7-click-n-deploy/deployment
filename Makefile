@@ -3,17 +3,17 @@
 # Manages frontend, backend, worker services
 #
 # This Makefile drives the LOCAL development environment
-# (docker-compose.dev.yml). The production stack
+# (docker-compose.dev.yml). The deployed stack
 # (docker-compose.deploy.yml) is deployed exclusively via the
 # Ansible CD pipeline (infrastructure/ansible/) — there are no
-# local prod-* targets, on purpose: prod is reproduced from the
-# pipeline, not from a developer laptop.
+# local deploy-* targets, on purpose: the deployed stack is
+# reproduced from the pipeline, not from a developer laptop.
 # ================================================================
 #
 # Conventions:
 # - All recipes that produce no file are listed in .PHONY below.
-# - Compose-file paths live in $(DC_DEV) / $(DC_PROD) so we never
-#   re-spell "docker-compose.*.yml" in two recipes.
+# - Compose-file paths live in $(DC_DEV) so we never
+#   re-spell "docker-compose.dev.yml" in two recipes.
 # - Help is generated from `## comments` on the target line — keep
 #   them short, they are shown in the `make help` overview.
 #
@@ -296,9 +296,9 @@ seed-reset: ## ⚠️  Reset DB + Keycloak realm, then seed
 # ----------------------------------------------------------------
 # Database Migrations
 # ----------------------------------------------------------------
-# Production migrations run automatically as a step in the Ansible
-# CD pipeline (infrastructure/ansible/deploy_*.yml) — there is no
-# local migrate-prod target, on purpose.
+# Migrations on the deployed stack run automatically as a step in
+# the Ansible CD pipeline (infrastructure/ansible/deploy_staging.yml)
+# — there is no local migrate-deploy target, on purpose.
 migrate-dev: ## Run database migrations (dev)
 	$(DC_DEV) exec backend poetry run alembic upgrade head
 
