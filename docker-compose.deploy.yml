@@ -369,6 +369,14 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: nginx-prod
+    # ``config_hash`` is a content fingerprint of nginx.conf, computed
+    # by Ansible before ``docker compose up``. nginx.conf is bind-
+    # mounted, so a content change alone does not make Compose recreate
+    # the container — but a label change does. Whenever nginx.conf is
+    # edited the label changes, Compose sees a spec drift, and the
+    # nginx container is recreated automatically.
+    labels:
+      config_hash: "${NGINX_CONFIG_HASH:-empty}"
     ports:
       - "80:80"
       - "443:443"
