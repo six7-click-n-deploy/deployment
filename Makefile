@@ -241,10 +241,12 @@ keycloak-export: ## Export the dhbw realm to keycloak/keycloak-export.json
 	$(DC_DEV) cp keycloak:/tmp/dhbw-realm.json ./keycloak/keycloak-export.json
 	@echo "✓ Realm exported → keycloak/keycloak-export.json"
 
-keycloak-disable-ssl: ## Allow plain-HTTP admin login on localhost (UPDATE realm SET ssl_required=NONE)
+keycloak-disable-ssl: ## Allow plain-HTTP admin login on localhost (UPDATE realm SET ssl_required=NONE + restart)
 	@echo "Disabling HTTPS requirement on the master realm..."
 	$(DC_DEV) exec keycloak-postgres psql -U $${KEYCLOAK_DB_USER:-keycloak} -d $${KEYCLOAK_DB_NAME:-keycloak} \
 		-c "UPDATE realm SET ssl_required = 'NONE' WHERE name = 'master';"
+	@echo "Restarting Keycloak so it re-reads the realm settings..."
+	$(DC_DEV) restart keycloak
 	@echo "✓ master realm now accepts HTTP — Admin Console reachable at http://localhost:$(KEYCLOAK_PORT)/admin"
 
 keycloak-token: ## Get a token (usage: make keycloak-token USER=luca.baeck PASS=1234)
