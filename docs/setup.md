@@ -11,7 +11,7 @@ Der App Store ist ein Web-System, in dem Studierende und Dozierende vorgefertigt
 | Git | 2.x | |
 | Python 3 | 3.11+ | Wird einmalig zum Generieren des Fernet-Keys gebraucht |
 | GNU Make | Pflicht | Alle Schritte sind als `make`-Targets ausgelegt — wer kein Make hat, kann die zugrunde liegenden Befehle direkt aus dem [Makefile](../Makefile) ablesen |
-| Freie Ports | 5173, 8000, 8080, 5432, 5672, 15672, 6379, 5050, 55433 | Konflikt? Siehe "Häufige Probleme" |
+| Freie Ports | 5173, 8000, 8080, 5432, 5672, 15672, 6379, 5050, 55433 | Bei Konflikt den entsprechenden Port in der `.env` überschreiben (z. B. `KEYCLOAK_PORT=8180`) — die zugehörige `VITE_*_URL` ebenfalls anpassen |
 
 RAM: mindestens 6 GB frei für Docker. Auf macOS in Docker Desktop unter "Resources" prüfen.
 
@@ -62,17 +62,7 @@ Generieren:
 python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 ```
 
-Die Ausgabe sieht z. B. so aus:
-
-```
-9cY4tIz71WS1RBkh9tEjMgnBE9hsrlvHdErz9DxHEOc=
-```
-
-In `.env` eintragen:
-
-```
-CREDENTIAL_ENCRYPTION_KEY=9cY4tIz71WS1RBkh9tEjMgnBE9hsrlvHdErz9DxHEOc=
-```
+Die Ausgabe — ein url-safe-base64-String, der mit `=` endet — als `CREDENTIAL_ENCRYPTION_KEY` in die `.env` eintragen.
 
 Falls `cryptography` lokal nicht installiert ist:
 
@@ -155,12 +145,14 @@ Das Skript ist idempotent — wiederholtes Ausführen schadet nicht und ist bei 
 
 ## Schritt 6: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
 
+Der mit Schritt 5 importierte Realm bringt den `appstore-backend`-Client mit dem maskierten Secret `**********` aus dem Realm-Export mit. Das ist kein gültiger Wert — das echte Secret muss in Keycloak einmalig neu erzeugt und in die `.env` übernommen werden.
+
 1. http://localhost:8080/admin im Browser öffnen.
 2. Mit `admin` / `admin` einloggen.
 3. Oben links im Realm-Switcher von `master` auf `dhbw` umstellen.
 4. Links auf "Clients" → `appstore-backend` öffnen.
-5. Reiter "Credentials" → Wert von "Client secret" kopieren.
-6. In `.env` eintragen:
+5. Reiter "Credentials" → Button **"Regenerate"** klicken (das Feld zeigt vorher buchstäblich `**********` — das ist die Maskierung aus dem Realm-Export, kein nutzbarer Wert).
+6. Den neu generierten Wert kopieren und in `.env` eintragen:
 
    ```
    KEYCLOAK_CLIENT_SECRET=<kopierter-wert>
@@ -235,84 +227,6 @@ Im Browser http://localhost:5173 öffnen, "Login" klicken, mit einem der folgend
 | `jan.krueger@dhbw.de` | `1234` | INF TI 23 |
 
 Hinweise zur E-Mail-Konvention: `<vorname>.<nachname>@dhbw.de`, alles klein, Umlaute werden ersetzt (`ä → ae`, `ö → oe`, `ü → ue`, `ß → ss`). Der Keycloak-Admin (`admin` / `admin`) ist NICHT identisch mit den Realm-Usern — er funktioniert nur unter http://localhost:8080/admin, nicht im Frontend.
-
-## Häufige Probleme
-
-### `docker compose up` bricht ab mit `CREDENTIAL_ENCRYPTION_KEY is required`
-
-Die Variable ist in der `.env` leer oder fehlt. Generieren und eintragen (siehe Schritt 2a), dann `make dev-up` erneut.
-
-### Port belegt: `bind: address already in use` auf 5432, 6379, 8080, …
-
-Auf macOS belegen häufig: lokales Postgres.app (5432), brew-Redis (6379), Java-Tomcat (8080). In `.env` den entsprechenden Port überschreiben, z. B.:
-
-```
-DB_PORT=55432
-KEYCLOAK_PORT=8180
-```
-
-Wichtig: Wird `KEYCLOAK_PORT` geändert, MUSS `VITE_KEYCLOAK_URL` mitziehen (z. B. `http://localhost:8180`). Bei `BACKEND_PORT` analog `VITE_API_URL` und `CORS_ORIGINS`.
-
-### Login öffnet Keycloak, Redirect zurück bricht mit `Invalid parameter: redirect_uri`
-
-Der Realm erlaubt nur `http://localhost:5173/*` (und `localhost:3000/*`). Wenn das Frontend über Tailscale, LAN-IP oder einen anderen Hostnamen aufgerufen wird, lehnt Keycloak ab. Lösung: strikt `http://localhost:5173` verwenden, oder im Keycloak-Admin-UI unter Clients → `appstore-frontend` → "Valid redirect URIs" weitere URIs eintragen.
-
-### Backend antwortet mit 500 `token validation failed` oder `no client_secret`
-
-`KEYCLOAK_CLIENT_SECRET` ist leer oder Platzhalter. Schritt 6 ausführen, danach `make dev-restart-backend`.
-
-### `make seed-data` schlägt mit 401 Unauthorized fehl
-
-Die in `.env` gesetzten `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` passen nicht zu dem Admin, der im Keycloak-Container provisioniert wurde. Das Keycloak-Volume merkt sich das Passwort vom ersten Start.
-
-Fix: Werte in `.env` zurücksetzen auf den Boot-Zustand, oder Volumes neu anlegen:
-
-```bash
-make clean-dev
-make dev-up
-# 90 Sekunden warten, dann
-make migrate-dev
-make seed-data
-```
-
-Achtung: `down -v` löscht ALLE DB-Daten (Backend und Keycloak).
-
-### `make seed-data` meldet `relation "users" does not exist`
-
-`migrate-dev` wurde übersprungen. Erst migrieren, dann seeden:
-
-```bash
-make migrate-dev
-make seed-data
-```
-
-### Login hängt nach Realm-Reset in Endlos-Refresh
-
-Browser hat alten Token im localStorage. Hard-Reload (Cmd-Shift-R / Strg-F5) und Devtools → Application → Local Storage → `http://localhost:5173` → "Clear" klicken. Oder Inkognito-Fenster verwenden.
-
-### Worker-Logs: `connection refused rabbitmq:5672`
-
-RabbitMQ braucht beim ersten Start etwa 15 Sekunden, das Backend startet seinen Celery-Event-Listener schneller. Der Listener versucht es selbst erneut — wenn er sich verschluckt, hilft:
-
-```bash
-make dev-restart-backend
-```
-
-### Deployment schlägt mit `clouds.yaml not found` oder OpenStack-Auth-Fehler fehl
-
-Der Worker bekommt OpenStack-Credentials erst zur Laufzeit, verschlüsselt vom Backend. Für rein lokales Testen (App-Store-UI, Approvals, Seed-Daten anschauen) ist das egal — Deployments scheitern dann, alles andere funktioniert. Echte OpenStack-Credentials muss man im Frontend unter "Profil" eintragen.
-
-### Worker kommt nicht ins Internet (Corporate VPN / macOS)
-
-Das `worker-network` ist isoliert, mit explizitem DNS 8.8.8.8. Bei VPN-Konflikten:
-
-```bash
-make dev-down
-docker network rm deployment_worker-network-dev 2>/dev/null || true
-make dev-up
-```
-
-Oder VPN kurz aus, oder in `docker-compose.dev.yml` unter `worker.dns` einen Corporate-DNS-Server eintragen.
 
 ## Stoppen, Neustarten, Zurücksetzen
 
