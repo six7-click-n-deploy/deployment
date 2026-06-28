@@ -7,3 +7,9 @@
 # `test-teacher` user. Production never imports this file. Re-evaluate
 # if the file ever ships outside dev compose.
 ae6597035409374d1fe83f23a7d267a3014ae343:keycloak/keycloak-export.json:generic-api-key:520
+
+# Example Fernet key in docs/setup.md. Shown so readers see the format
+# of `Fernet.generate_key()`'s output — Schritt 2a tells every operator
+# to generate their own. Trips gitleaks' generic high-entropy heuristic
+# but is not a live credential.
+ba5dbed0e73e054f8f4044e7d0d36b7a73bf4e76:docs/setup.md:generic-api-key:74
