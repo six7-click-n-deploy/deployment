@@ -7,3 +7,10 @@
 # `test-teacher` user. Production never imports this file. Re-evaluate
 # if the file ever ships outside dev compose.
 ae6597035409374d1fe83f23a7d267a3014ae343:keycloak/keycloak-export.json:generic-api-key:520
+
+# Historical: an early version of docs/setup.md (commit ba5dbed) used a
+# real-looking example Fernet key. Subsequent commits replaced it with
+# a placeholder, but gitleaks still scans the full history. Whitelist
+# the exact fingerprint of the historical commit — current HEAD does
+# not contain any high-entropy literal in this file.
+ba5dbed0e73e054f8f4044e7d0d36b7a73bf4e76:docs/setup.md:generic-api-key:74
