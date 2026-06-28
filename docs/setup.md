@@ -147,6 +147,14 @@ Das Skript ist idempotent — wiederholtes Ausführen schadet nicht und ist bei 
 
 Der mit Schritt 5 importierte Realm bringt den `appstore-backend`-Client mit dem maskierten Secret `**********` aus dem Realm-Export mit. Das ist kein gültiger Wert — das echte Secret muss in Keycloak einmalig neu erzeugt und in die `.env` übernommen werden.
 
+Vorbereitung: Der `master`-Realm verlangt per Default HTTPS, weshalb http://localhost:8080/admin sonst mit "HTTPS required" abbricht. Einmal abschalten:
+
+```bash
+make keycloak-disable-ssl
+```
+
+Anschließend:
+
 1. http://localhost:8080/admin im Browser öffnen.
 2. Mit `admin` / `admin` einloggen.
 3. Oben links im Realm-Switcher von `master` auf `dhbw` umstellen.

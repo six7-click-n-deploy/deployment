@@ -43,7 +43,7 @@ PGADMIN_PORT       ?= 5050
         shell-backend shell-worker shell-frontend \
         shell-db shell-redis shell-keycloak shell-keycloak-db \
         keycloak-up keycloak-down keycloak-restart keycloak-logs keycloak-ps keycloak-reset \
-        keycloak-export keycloak-token keycloak-userinfo keycloak-url \
+        keycloak-export keycloak-token keycloak-userinfo keycloak-url keycloak-disable-ssl \
         seed-data seed-reset \
         migrate-dev migration-create migration-history migration-current migration-downgrade \
         db-reset-dev \
@@ -240,6 +240,12 @@ keycloak-export: ## Export the dhbw realm to keycloak/keycloak-export.json
 	$(DC_DEV) exec keycloak /opt/keycloak/bin/kc.sh export --dir /tmp --realm dhbw
 	$(DC_DEV) cp keycloak:/tmp/dhbw-realm.json ./keycloak/keycloak-export.json
 	@echo "✓ Realm exported → keycloak/keycloak-export.json"
+
+keycloak-disable-ssl: ## Allow plain-HTTP admin login on localhost (UPDATE realm SET ssl_required=NONE)
+	@echo "Disabling HTTPS requirement on the master realm..."
+	$(DC_DEV) exec keycloak-postgres psql -U $${KEYCLOAK_DB_USER:-keycloak} -d $${KEYCLOAK_DB_NAME:-keycloak} \
+		-c "UPDATE realm SET ssl_required = 'NONE' WHERE name = 'master';"
+	@echo "✓ master realm now accepts HTTP — Admin Console reachable at http://localhost:$(KEYCLOAK_PORT)/admin"
 
 keycloak-token: ## Get a token (usage: make keycloak-token USER=luca.baeck PASS=1234)
 	@curl -s -X POST http://localhost:$(KEYCLOAK_PORT)/realms/dhbw/protocol/openid-connect/token \
