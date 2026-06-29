@@ -79,7 +79,7 @@ Alle weiteren Befehle werden aus `/opt/app-store/deployment` ausgeführt — dor
 ## Schritt 2: `.env` anlegen
 
 > [!TIP]
-> Auf Anfrage stellen wir eine fertig befüllte `.env` bereit. In dem Fall genügt es, die Datei direkt nach `deployment/.env` zu legen und mit Schritt 3 weiterzumachen — die folgenden Unterpunkte 2a–2j sind dann nicht nötig.
+> Auf Anfrage stellen wir eine fertig befüllte `.env` bereit. In dem Fall genügt es, die Datei direkt nach `deployment/.env` zu legen, alle Vorkommen von `<VM-IP>` durch die IP der VM zu ersetzen, auf der der App Store läuft — und mit Schritt 3 weiterzumachen. Die folgenden Unterpunkte 2a–2j sind dann nicht nötig.
 
 `docker-compose.prod.yml` markiert sämtliche kritischen Werte als `${VAR:?... is required}` — der Stack startet erst, wenn jeder Pflicht-Wert gesetzt ist. Anders als in Dev gibt es keine `.env.example` mit Defaults; jede Variable muss explizit gefüllt werden.
 
