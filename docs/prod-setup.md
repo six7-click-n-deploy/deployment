@@ -22,27 +22,9 @@ gezogen — gebaut wird auf der VM nichts.
 | Python 3 | 3.11+ | Einmalig zum Generieren der Secrets |
 | OpenSSL | 3.x | Für das Self-signed-Zertifikat |
 | GNU Make | optional | Alle Schritte sind als `make`-Targets verfügbar; ohne Make einfach die nackten `docker compose`-Aufrufe im Makefile abschreiben. |
-| Freie Ports | 80, 443 | Müssen von außen erreichbar sein |
 | VM-IP | z. B. `203.0.113.42` | Die öffentliche IP, unter der die VM erreichbar ist |
 
-RAM/CPU: mindestens 8 GB, 4 vCPU, 50 GB Disk. Der Stack reserviert in Summe ca. 4 GB RAM und 8 CPU-Kerne als Limits.
-
-Die GHCR-Images (`ghcr.io/six7-click-n-deploy/{backend,worker,frontend}`)
-sind **öffentlich**. Kein `docker login` nötig.
-
-## Schritt 1: Docker installieren
-
-```bash
-sudo apt update && sudo apt upgrade -y
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-newgrp docker
-docker compose version
-```
-
-Erwartete Ausgabe: `Docker Compose version v2.x.x`.
-
-## Schritt 2: Repository auf die VM klonen
+## Schritt 1: Repository auf die VM klonen
 
 ```bash
 sudo mkdir -p /opt/app-store
@@ -56,7 +38,7 @@ Alle weiteren Befehle aus `/opt/app-store/deployment` ausführen — dort
 liegen `docker-compose.prod.yml`, das `Makefile`, das `nginx/`-Verzeichnis
 und der Keycloak-Realm-Export.
 
-## Schritt 3: `.env` anlegen
+## Schritt 2: `.env` anlegen
 
 `docker-compose.prod.yml` markiert sämtliche kritischen Werte als
 `${VAR:?... is required}` — der Stack startet erst, wenn jeder Pflicht-Wert
@@ -70,13 +52,13 @@ chmod 600 .env
 Die folgenden Felder in `.env` eintragen. Reihenfolge ist egal, Kommentare
 mit `#` sind erlaubt.
 
-### 3a. VM-IP als Variable (zur einfacheren Wiederverwendung unten)
+### 2a. VM-IP als Variable (zur einfacheren Wiederverwendung unten)
 
 Im Folgenden verwende ich `<VM-IP>` als Platzhalter — ersetze ihn überall
 durch deine tatsächliche IP-Adresse, z. B. `203.0.113.42`. Wenn du auf
 derselben Maschine testest, kann auch `localhost` stehen.
 
-### 3b. Datenbank-Credentials (Pflicht)
+### 2b. Datenbank-Credentials (Pflicht)
 
 Drei voneinander isolierte Postgres-Instanzen — Anwendung, Terraform-State
 (Worker), Keycloak. Jede bekommt eigene Credentials. Passwörter generieren
@@ -96,7 +78,7 @@ KEYCLOAK_DB_PASSWORD=<random>
 KEYCLOAK_DB_NAME=keycloak
 ```
 
-### 3c. RabbitMQ-Credentials (Pflicht)
+### 2c. RabbitMQ-Credentials (Pflicht)
 
 ```
 RABBITMQ_USER=appstore
@@ -104,7 +86,7 @@ RABBITMQ_PASSWORD=<random>
 RABBITMQ_VHOST=/
 ```
 
-### 3d. Keycloak-Admin (Pflicht)
+### 2d. Keycloak-Admin (Pflicht)
 
 ```
 KEYCLOAK_ADMIN_USER=admin
@@ -115,7 +97,7 @@ Der Admin-User wird beim ersten Keycloak-Boot im `master`-Realm angelegt
 — danach lässt sich das Passwort ohne DB-Reset nicht mehr ändern. Den
 Wert gut sichern.
 
-### 3e. `SECRET_KEY` (Pflicht)
+### 2e. `SECRET_KEY` (Pflicht)
 
 Symmetrischer Schlüssel für die Backend-JWTs.
 
@@ -127,7 +109,7 @@ python3 -c 'import secrets; print(secrets.token_hex(32))'
 SECRET_KEY=<output>
 ```
 
-### 3f. `CREDENTIAL_ENCRYPTION_KEY` (Pflicht)
+### 2f. `CREDENTIAL_ENCRYPTION_KEY` (Pflicht)
 
 Symmetrischer Fernet-Key, mit dem Backend und Worker OpenStack-Credentials
 ver- und entschlüsseln. Beide Services müssen **denselben** Wert haben
@@ -145,7 +127,7 @@ CREDENTIAL_ENCRYPTION_KEY=<output>
 Falls `cryptography` lokal nicht installiert ist: `pip install cryptography`
 oder `apt install python3-cryptography`.
 
-### 3g. `KEYCLOAK_CLIENT_SECRET` (Platzhalter)
+### 2g. `KEYCLOAK_CLIENT_SECRET` (Platzhalter)
 
 Der echte Wert kann erst nach dem ersten Keycloak-Start aus dem Admin-UI
 geholt werden. Für den Erst-Start einen Platzhalter eintragen:
@@ -154,9 +136,9 @@ geholt werden. Für den Erst-Start einen Platzhalter eintragen:
 KEYCLOAK_CLIENT_SECRET=changeme
 ```
 
-In Schritt 7 wird der echte Wert nachgetragen.
+In Schritt 6 wird der echte Wert nachgetragen.
 
-### 3h. `GIT_ACCESS_TOKEN` (Pflicht)
+### 2h. `GIT_ACCESS_TOKEN` (Pflicht)
 
 GitHub Personal Access Token mit `repo`-Scope. Wird vom Worker beim
 Klonen privater App-Repos und vom Backend für Hook-Verifikation
@@ -167,7 +149,7 @@ Personal access tokens (classic) → Generate new token.
 GIT_ACCESS_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-### 3i. URLs (Pflicht)
+### 2i. URLs (Pflicht)
 
 Alle URLs zeigen auf deine VM. Bei IP-VM ohne DNS sieht das so aus:
 
@@ -180,7 +162,7 @@ VITE_API_URL=https://<VM-IP>/api
 VITE_KEYCLOAK_URL=https://<VM-IP>
 ```
 
-### 3j. `SMTP_*` (optional)
+### 2j. `SMTP_*` (optional)
 
 E-Mail-Benachrichtigungen (Approval-Workflow). Wenn du sie nicht
 brauchst, einfach `SMTP_ENABLED=false` lassen — der Stack startet
@@ -196,7 +178,7 @@ SMTP_FROM_EMAIL=
 SMTP_FROM_NAME=Click-n-Deploy
 ```
 
-## Schritt 4: Self-signed-Zertifikat erzeugen
+## Schritt 3: Self-signed-Zertifikat erzeugen
 
 `nginx-prod` terminiert HTTPS auf Port 443 und erwartet zwei Dateien
 unter `nginx/certs/`. Generiere beides mit einem Make-Target:
@@ -217,7 +199,7 @@ nginx/certs/key.pem       # Private key, 600
 Browser zeigen beim ersten Aufruf eine Sicherheitswarnung („Verbindung
 nicht sicher") — Ausnahme einmal bestätigen und gut.
 
-## Schritt 5: Stack starten
+## Schritt 4: Stack starten
 
 ```bash
 make prod-up
@@ -242,7 +224,7 @@ make prod-logs SVC=backend
 make prod-logs SVC=keycloak
 ```
 
-Bevor Schritt 6 läuft, sicherstellen dass Keycloak fertig hochgefahren
+Bevor Schritt 5 läuft, sicherstellen dass Keycloak fertig hochgefahren
 ist:
 
 ```bash
@@ -258,7 +240,7 @@ Listening on: http://0.0.0.0:8080
 
 `Ctrl-C` beendet das Tail.
 
-## Schritt 6: Datenbank-Migrationen anwenden
+## Schritt 5: Datenbank-Migrationen anwenden
 
 Migrationen sind bewusst NICHT Teil der Compose-Datei (eine
 Migrate-Init-Container-Variante würde Fehler in der Compose-Output
@@ -278,7 +260,7 @@ nacheinander ausgeführt; bei aktuellem Schema gibt es keine Ausgabe.
 > Dev werden in Prod NICHT geseedet — User müssen manuell im
 > Keycloak-Admin-UI angelegt werden.
 
-## Schritt 7: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
+## Schritt 6: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
 
 Der importierte Realm bringt den `appstore-backend`-Client mit einem
 maskierten Secret-Wert (`**********`) aus dem Realm-Export mit — kein
@@ -286,7 +268,7 @@ gültiger Wert. Das echte Secret muss einmalig in Keycloak neu erzeugt
 und in die `.env` übernommen werden.
 
 1. `https://<VM-IP>/admin` im Browser öffnen (Cert-Warnung akzeptieren).
-2. Mit `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` aus Schritt 3d
+2. Mit `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` aus Schritt 2d
    einloggen.
 3. Realm-Switcher oben links: von `master` auf `dhbw` umstellen.
 4. Links auf **Clients** → `appstore-backend` öffnen.
@@ -305,7 +287,7 @@ und in die `.env` übernommen werden.
 
 Ab jetzt kann das Backend Tokens validieren.
 
-## Schritt 8: Seed-Daten anlegen
+## Schritt 7: Seed-Daten anlegen
 
 Initiale Test-User (Profs, Studenten, ein Admin), die sechs offiziellen
 DHBW-Apps und ihre Approval-Datensätze einspielen:
