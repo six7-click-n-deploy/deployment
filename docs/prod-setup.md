@@ -16,7 +16,8 @@ Der App Store läuft im Produktivbetrieb auf einer einzelnen Docker-Host-VM (Ope
 | OpenSSL | 3.x | Für die Zertifikatserstellung |
 | Freie Ports | 80, 443 | Müssen von außen erreichbar sein |
 | Öffentlicher DNS-Name | z. B. `appstore.dhbw.de` | Zeigt auf die VM, wird im Zertifikat verwendet |
-| GitHub Personal Access Token | `read:packages`-Scope | Pflicht — die Prod-Images liegen in GHCR |
+
+Die Prod-Images liegen als **öffentliche** Pakete in GHCR (`ghcr.io/six7-click-n-deploy/{backend,worker,frontend}:latest`), ein Login ist für reine Pulls daher nicht nötig.
 
 RAM: mindestens 8 GB, 4 vCPU, 50 GB Disk empfohlen. Der Stack reserviert in Summe ca. 4 GB RAM und 8 CPU-Kerne als Limits.
 
@@ -53,20 +54,10 @@ cd deployment
 
 Alle weiteren Befehle werden aus `/opt/app-store/deployment` ausgeführt — dort liegen `docker-compose.prod.yml`, das `nginx/`-Verzeichnis und die `keycloak/`-Realm-Exportdatei.
 
-## Schritt 3: GHCR-Login
-
-Die Prod-Images sind in GitHub Container Registry (`ghcr.io/six7-click-n-deploy/*`) hinterlegt. Damit `compose up` sie pullen darf, einmalig anmelden:
-
-```bash
-echo "$GITHUB_TOKEN" | docker login ghcr.io --username <github-user> --password-stdin
-```
-
-`$GITHUB_TOKEN` ist ein Personal Access Token mit `read:packages`-Scope. Nach dem Login speichert Docker die Credentials in `~/.docker/config.json` — für reine Pull-Workflows reicht das einmalige Anmelden.
-
-## Schritt 4: `.env` anlegen
+## Schritt 3: `.env` anlegen
 
 > [!TIP]
-> Auf Anfrage stellen wir eine fertig befüllte `.env`-Vorlage für Prod bereit. In dem Fall genügt es, die Datei nach `deployment/.env` zu legen und mit Schritt 5 weiterzumachen — die folgenden Unterpunkte 4a–4i sind dann nicht nötig.
+> Auf Anfrage stellen wir eine fertig befüllte `.env`-Vorlage für Prod bereit. In dem Fall genügt es, die Datei nach `deployment/.env` zu legen und mit Schritt 4 weiterzumachen — die folgenden Unterpunkte 3a–3i sind dann nicht nötig.
 
 Im Gegensatz zu Dev gibt es für Prod keine `.env.example` mit Defaults. `docker-compose.prod.yml` markiert sämtliche kritischen Werte mit `${VAR:?... is required}`, d. h. der Stack startet nicht, solange auch nur eine Variable fehlt. Datei anlegen:
 
@@ -77,7 +68,7 @@ chmod 600 .env
 
 Die folgenden Felder sind Pflicht. Reihenfolge in der Datei ist egal, Kommentare mit `#` sind erlaubt.
 
-### 4a. Datenbank-Credentials (Pflicht)
+### 3a. Datenbank-Credentials (Pflicht)
 
 Drei voneinander isolierte Postgres-Instanzen — Anwendung, Terraform-State (Worker), Keycloak. Jede bekommt eigene Credentials. Passwörter mit `openssl rand -base64 24` erzeugen.
 
@@ -95,7 +86,7 @@ KEYCLOAK_DB_PASSWORD=<random>
 KEYCLOAK_DB_NAME=keycloak
 ```
 
-### 4b. RabbitMQ-Credentials (Pflicht)
+### 3b. RabbitMQ-Credentials (Pflicht)
 
 ```
 RABBITMQ_USER=appstore
@@ -103,7 +94,7 @@ RABBITMQ_PASSWORD=<random>
 RABBITMQ_VHOST=/
 ```
 
-### 4c. Keycloak-Admin (Pflicht)
+### 3c. Keycloak-Admin (Pflicht)
 
 ```
 KEYCLOAK_ADMIN_USER=admin
@@ -112,7 +103,7 @@ KEYCLOAK_ADMIN_PASSWORD=<random>
 
 Der Admin-User wird beim ersten Keycloak-Boot im `master`-Realm angelegt — danach lässt sich das Passwort ohne DB-Reset nicht mehr ändern. Den Wert gut sichern.
 
-### 4d. `SECRET_KEY` (Pflicht)
+### 3d. `SECRET_KEY` (Pflicht)
 
 Symmetrischer Schlüssel für die Backend-JWTs. Generieren:
 
@@ -124,7 +115,7 @@ python3 -c 'import secrets; print(secrets.token_hex(32))'
 SECRET_KEY=<output>
 ```
 
-### 4e. `CREDENTIAL_ENCRYPTION_KEY` (Pflicht)
+### 3e. `CREDENTIAL_ENCRYPTION_KEY` (Pflicht)
 
 Symmetrischer Fernet-Key, mit dem Backend und Worker OpenStack-Credentials ver- und entschlüsseln. Beide Services müssen denselben Wert haben.
 
@@ -138,7 +129,7 @@ CREDENTIAL_ENCRYPTION_KEY=<output>
 
 Falls `cryptography` lokal nicht installiert ist: `pip install cryptography` (oder `apt install python3-cryptography`).
 
-### 4f. `KEYCLOAK_CLIENT_SECRET` (Platzhalter)
+### 3f. `KEYCLOAK_CLIENT_SECRET` (Platzhalter)
 
 Der echte Wert kann erst nach dem ersten Keycloak-Start aus dem Admin-UI geholt werden. Für den Erst-Start einen Platzhalter eintragen:
 
@@ -146,9 +137,9 @@ Der echte Wert kann erst nach dem ersten Keycloak-Start aus dem Admin-UI geholt 
 KEYCLOAK_CLIENT_SECRET=changeme
 ```
 
-In Schritt 8 wird der echte Wert nachgetragen.
+In Schritt 7 wird der echte Wert nachgetragen.
 
-### 4g. `GIT_ACCESS_TOKEN` (Pflicht)
+### 3g. `GIT_ACCESS_TOKEN` (Pflicht)
 
 GitHub Personal Access Token mit `repo`-Scope. Wird gebraucht, damit der Worker beim Deployment private App-Repos klonen und das Backend Hooks verifizieren kann. Anlegen unter: GitHub → Settings → Developer settings → Personal access tokens (classic) → Generate new token.
 
@@ -157,9 +148,9 @@ GIT_ACCESS_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 GIT_USER=<github-user>
 ```
 
-### 4h. Öffentliche URLs (Pflicht)
+### 3h. Öffentliche URLs (Pflicht)
 
-Müssen mit dem Zertifikat aus Schritt 5 und dem DNS-Eintrag der VM übereinstimmen. Beispiel für `appstore.dhbw.de`:
+Müssen mit dem Zertifikat aus Schritt 4 und dem DNS-Eintrag der VM übereinstimmen. Beispiel für `appstore.dhbw.de`:
 
 ```
 APP_BASE_URL=https://appstore.dhbw.de
@@ -172,7 +163,7 @@ VITE_KEYCLOAK_URL=https://appstore.dhbw.de
 
 Alle drei `VITE_*`-Variablen werden beim Frontend-Build in das SPA gebaked — eine Änderung erfordert anschließend `docker compose -f docker-compose.prod.yml up -d --force-recreate frontend`.
 
-### 4i. `SMTP_*` (optional)
+### 3i. `SMTP_*` (optional)
 
 E-Mail-Benachrichtigungen (Approval-Workflow). Wenn nicht gebraucht, einfach `SMTP_ENABLED=false` lassen und die anderen Felder leer. Für Gmail ein App-Password verwenden, nicht das Account-Passwort.
 
@@ -186,7 +177,7 @@ SMTP_FROM_EMAIL=
 SMTP_FROM_NAME=Click-n-Deploy
 ```
 
-## Schritt 5: TLS-Zertifikat einrichten
+## Schritt 4: TLS-Zertifikat einrichten
 
 `nginx-prod` terminiert HTTPS auf Port 443 und erwartet zwei bind-gemountete Dateien:
 
@@ -204,7 +195,7 @@ chmod 700 nginx/certs
 
 Eine der drei folgenden Optionen wählen:
 
-### 5a. Variante A: Self-signed (intern, schnellster Weg)
+### 4a. Variante A: Self-signed (intern, schnellster Weg)
 
 Für interne Deployments oder reine Testumgebungen, bei denen Browser-Warnungen akzeptabel sind. Gültigkeit 10 Jahre, Common Name + SAN auf den DNS-Namen bzw. die IP:
 
@@ -220,7 +211,7 @@ chmod 644 nginx/certs/cert.pem
 
 Beim ersten Browserzugriff erscheint eine Warnung ("Verbindung nicht sicher") — Ausnahme einmal bestätigen.
 
-### 5b. Variante B: Let's Encrypt (öffentlich erreichbar, kostenlos)
+### 4b. Variante B: Let's Encrypt (öffentlich erreichbar, kostenlos)
 
 Wenn die VM aus dem Internet auf Port 80 erreichbar ist und ein gültiger DNS-A-Record existiert. Certbot direkt auf der Host-Maschine, im Standalone-Modus (nginx ist beim Erst-Erzeugen noch nicht gestartet):
 
@@ -261,7 +252,7 @@ Renewal testen:
 sudo certbot renew --dry-run
 ```
 
-### 5c. Variante C: Bereits vorhandenes Zertifikat einer CA (DHBW PKI o. ä.)
+### 4c. Variante C: Bereits vorhandenes Zertifikat einer CA (DHBW PKI o. ä.)
 
 Wenn ein offizielles Zertifikat von der Hochschul-/Firmen-CA vorliegt, die beiden Dateien direkt einspielen:
 
@@ -286,7 +277,7 @@ diff <(openssl x509 -in nginx/certs/cert.pem -noout -pubkey) \
 
 Der `diff` darf nichts ausgeben — sobald Unterschiede erscheinen, gehören Cert und Key nicht zusammen.
 
-## Schritt 6: Stack starten
+## Schritt 5: Stack starten
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --pull always
@@ -305,7 +296,7 @@ docker compose -f docker-compose.prod.yml logs -f backend
 docker compose -f docker-compose.prod.yml logs -f keycloak
 ```
 
-Bevor Schritt 7 läuft, sicherstellen dass Keycloak fertig ist:
+Bevor Schritt 6 läuft, sicherstellen dass Keycloak fertig ist:
 
 ```bash
 docker compose -f docker-compose.prod.yml logs keycloak | grep -i "listening on\|started in"
@@ -318,7 +309,7 @@ Listening on: http://0.0.0.0:8080
 ... started in XX.XXXs
 ```
 
-## Schritt 7: Datenbank-Migrationen anwenden
+## Schritt 6: Datenbank-Migrationen anwenden
 
 Migrationen sind bewusst NICHT Teil der Compose-Datei (eine eigene Migrate-Init-Container-Variante würde Fehler im Compose-Output verstecken). Stattdessen einmalig per `docker exec` anstoßen:
 
@@ -331,12 +322,12 @@ Die Ausgabe endet mit `Running upgrade <revision> -> <revision>, …` für jede 
 > [!NOTE]
 > Die Realm-Daten (Clients, Rollen, Realm-Settings) werden beim ersten Start aus `keycloak/realm-export.json` importiert. Test-User wie in Dev (`tobias.admin@dhbw.de`, …) werden in Prod NICHT geseedet — User müssen manuell im Keycloak-Admin angelegt oder über einen Identity Provider föderiert werden.
 
-## Schritt 8: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
+## Schritt 7: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
 
 Der importierte Realm bringt den `appstore-backend`-Client mit dem maskierten Secret `**********` aus dem Realm-Export mit — kein gültiger Wert. Das echte Secret muss einmalig in Keycloak neu erzeugt und in die `.env` übernommen werden.
 
 1. `https://appstore.dhbw.de/admin` im Browser öffnen (das Self-signed-Zertifikat ggf. einmal akzeptieren).
-2. Mit `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` aus Schritt 4c einloggen.
+2. Mit `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` aus Schritt 3c einloggen.
 3. Oben links im Realm-Switcher von `master` auf `dhbw` umstellen.
 4. Links auf "Clients" → `appstore-backend` öffnen.
 5. Reiter "Credentials" → Button **"Regenerate"** klicken.
@@ -453,4 +444,4 @@ docker exec nginx-prod sh -c 'nginx -t && nginx -s reload'
 docker compose -f docker-compose.prod.yml down -v
 ```
 
-Nach `down -v` startet der nächste `compose up` mit leeren Volumes — Migrationen und Keycloak-Realm-Import laufen erneut, der `KEYCLOAK_CLIENT_SECRET`-Workflow aus Schritt 8 muss wiederholt werden.
+Nach `down -v` startet der nächste `compose up` mit leeren Volumes — Migrationen und Keycloak-Realm-Import laufen erneut, der `KEYCLOAK_CLIENT_SECRET`-Workflow aus Schritt 7 muss wiederholt werden.
