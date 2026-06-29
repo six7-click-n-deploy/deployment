@@ -283,12 +283,13 @@ APPS: list[SeedApp] = [
         ),
     ),
     SeedApp(
-        # Platzhalter-Git-Link: das private GitLab-CE-Repo existiert
-        # in der Org noch nicht. Sobald es angelegt ist, hier den Link
-        # ersetzen — der Worker klont an dieser URL beim Deploy.
+        # Display-Name bleibt "GitLab-CE", weil im Store das Produkt
+        # GitLab Community Edition deployed wird — das tatsächliche
+        # Org-Repo heißt aber ``GitLab-App`` (privat, daher klont der
+        # Worker mit dem hinterlegten Deploy-Token).
         name="GitLab-CE",
         description=_load_description("GitLab-CE.md"),
-        git_link="https://github.com/six7-click-n-deploy/GitLab-CE.git",
+        git_link="https://github.com/six7-click-n-deploy/GitLab-App.git",
         is_private=False,
         owner_email=_DHBW_OWNER_EMAIL,
         versions=(
