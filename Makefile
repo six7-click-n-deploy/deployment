@@ -46,7 +46,7 @@ PGADMIN_PORT       ?= 5050
         dev-build dev-build-backend dev-build-frontend dev-build-worker dev-rebuild dev-ps \
         shell-backend shell-worker shell-frontend \
         shell-db shell-redis shell-keycloak shell-keycloak-db \
-        keycloak-up keycloak-down keycloak-restart keycloak-logs keycloak-ps keycloak-reset \
+        keycloak-up keycloak-down keycloak-restart keycloak-logs keycloak-ps keycloak-reset keycloak-wait \
         keycloak-export keycloak-token keycloak-userinfo keycloak-url keycloak-disable-ssl \
         seed-data seed-reset \
         migrate-dev migration-create migration-history migration-current migration-downgrade \
@@ -237,9 +237,37 @@ keycloak-reset: ## ⚠️  Reset Keycloak (DROPS realm + users)
 		$(DC_DEV) up -d keycloak-postgres; \
 		sleep 5; \
 		$(DC_DEV) up -d keycloak; \
+		$(MAKE) --no-print-directory keycloak-wait; \
 		echo "✓ Keycloak reset complete"; \
 		echo "  Login: admin / admin"; \
 	fi
+
+keycloak-wait: ## Block until Keycloak's HTTP listener answers (60s timeout)
+	@# After a fresh `up -d keycloak`, the process boots Quarkus, imports
+	@# the realm from data/import, and only THEN starts the HTTP listener.
+	@# A subsequent `seed-data` racing against that startup explodes with
+	@# `Connection refused` because nothing answers port 8080 yet.
+	@#
+	@# We can't use `curl -sf /realms/master/.well-known/openid-configuration`
+	@# as the probe — Keycloak answers that endpoint with HTTP 403 by
+	@# default (it's only available to authenticated callers), and curl
+	@# -f treats 403 as a failure. The right signal is "any HTTP status
+	@# came back", because that means the listener is bound. We probe
+	@# /realms/master and accept anything that starts with a digit
+	@# (2xx / 3xx / 4xx) — only a refused / hung connection produces
+	@# an empty status code.
+	@printf "⏳ Warte auf Keycloak (max 60s)"; \
+	for i in $$(seq 1 60); do \
+	  code=$$(curl -s -o /dev/null -w "%{http_code}" -m 2 "http://localhost:$(KEYCLOAK_PORT)/realms/master" 2>/dev/null); \
+	  case "$$code" in \
+	    [234]*) echo " ✓ ready (nach $${i}s, HTTP $$code)"; exit 0 ;; \
+	  esac; \
+	  printf "."; \
+	  sleep 1; \
+	done; \
+	echo ""; \
+	echo "❌ Keycloak antwortet nach 60s nicht — siehe \`make dev-logs-keycloak\`"; \
+	exit 1
 
 keycloak-export: ## Export the dhbw realm to keycloak/keycloak-export.json
 	@echo "Exporting Keycloak realm 'dhbw'..."
