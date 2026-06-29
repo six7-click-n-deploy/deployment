@@ -56,6 +56,7 @@ PGADMIN_PORT       ?= 5050
         test-backend test-backend-cov lint-backend lint-backend-fix format-backend \
         prod-up prod-down prod-stop prod-restart prod-pull prod-logs prod-ps \
         prod-migrate prod-seed prod-cert-self-signed prod-reset \
+        prod-set-keycloak-urls \
         up down logs build
 
 # ----------------------------------------------------------------
@@ -498,6 +499,26 @@ prod-seed: ## Seed Keycloak users + DB (kurse, apps, approvals) against the prod
 	  -e KEYCLOAK_ADMIN_PASSWORD="$$KEYCLOAK_ADMIN_PASSWORD" \
 	  -e REALM_EXPORT_PATH=/tmp/realm-export.json \
 	  backend python /tmp/seed_data.py
+
+prod-set-keycloak-urls: ## Patch Keycloak client redirect/web-origin URLs to APP_BASE_URL from .env
+	@# Der Realm-Export bringt localhost-URLs mit (Dev-Snapshot). Dieses
+	@# Target patcht die beiden Clients (`appstore-frontend` +
+	@# `appstore-backend`) auf den Wert von `APP_BASE_URL`. Idempotent
+	@# und bewusst NICHT Teil von `prod-seed` — sonst würden manuell
+	@# ergänzte Redirect-URIs bei jedem Seed-Lauf stillschweigend weg.
+	@set -a; . ./.env; set +a; \
+	if [ -z "$$APP_BASE_URL" ]; then \
+	  echo "❌ APP_BASE_URL fehlt in .env"; exit 1; \
+	fi; \
+	if [ -z "$$KEYCLOAK_ADMIN_USER" ] || [ -z "$$KEYCLOAK_ADMIN_PASSWORD" ]; then \
+	  echo "❌ KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASSWORD fehlen in .env"; exit 1; \
+	fi; \
+	$(DC_PROD) cp ./seed/set_keycloak_urls.py backend:/tmp/set_keycloak_urls.py; \
+	$(DC_PROD) exec -T \
+	  -e KEYCLOAK_ADMIN_USER="$$KEYCLOAK_ADMIN_USER" \
+	  -e KEYCLOAK_ADMIN_PASSWORD="$$KEYCLOAK_ADMIN_PASSWORD" \
+	  -e APP_BASE_URL="$$APP_BASE_URL" \
+	  backend python /tmp/set_keycloak_urls.py
 
 prod-cert-self-signed: ## Generate a 10-year self-signed cert (override PROD_HOST=<ip-or-host>)
 	@mkdir -p $(PROD_CERT_DIR) && chmod 700 $(PROD_CERT_DIR)
