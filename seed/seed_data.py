@@ -297,6 +297,19 @@ APPS: list[SeedApp] = [
              "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
         ),
     ),
+    SeedApp(
+        # Monitoring-Stack: zwei VMs pro Team (Prometheus + Grafana).
+        # Org-Repo ist privat — Worker klont mit GIT_ACCESS_TOKEN.
+        name="Monitoring-Stack",
+        description=_load_description("Monitoring-Stack.md"),
+        git_link="https://github.com/six7-click-n-deploy/Monitoring-Stack.git",
+        is_private=False,
+        owner_email=_DHBW_OWNER_EMAIL,
+        versions=(
+            ("v1.0.0", APPROVED,
+             "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
+        ),
+    ),
 ]
 
 
