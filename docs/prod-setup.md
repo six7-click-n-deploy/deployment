@@ -23,6 +23,44 @@ Der App Store ist ein Web-System, in dem Studierende und Dozierende vorgefertigt
 
 Ein GitHub Personal Access Token mit `repo`-Scope ist **Pflicht** — der Worker klont damit private App-Repos und das Backend verifiziert GitHub-Hooks.
 
+> [!NOTE]
+> `<VM-IP>` ist in dieser Anleitung ein Platzhalter — überall durch die echte IP ersetzen (z. B. `141.72.12.185`). In Bash würde `<VM-IP>` als Redirect interpretiert und mit `syntax error near unexpected token` brechen.
+
+## Schritt 0: VM vorbereiten
+
+Ein frisches Ubuntu-Cloud-Image hat weder Docker noch Make installiert. Beides nachholen:
+
+```bash
+sudo apt update
+sudo apt install -y git make ca-certificates curl gnupg
+```
+
+Docker Engine + Compose v2 aus dem offiziellen Docker-Repo (Ubuntus `docker.io`-Paket ist meist mehrere Versionen hinter dem, was Compose v2 voraussetzt):
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Den aktuellen User in die `docker`-Gruppe legen, damit Docker-Befehle ohne `sudo` laufen — danach **neu einloggen** (`exit` + `ssh …`), sonst greift die Gruppenmitgliedschaft noch nicht:
+
+```bash
+sudo usermod -aG docker $USER
+exit
+```
+
+Nach dem Wiedereinloggen Smoke-Test:
+
+```bash
+docker --version
+docker compose version
+make --version
+```
+
 ## Schritt 1: Repository auf die VM klonen
 
 ```bash
@@ -34,6 +72,9 @@ cd deployment
 ```
 
 Alle weiteren Befehle werden aus `/opt/app-store/deployment` ausgeführt — dort liegen `Makefile`, `docker-compose.prod.yml`, das `nginx/`-Verzeichnis und der Keycloak-Realm-Export. `frontend/`, `backend/` und `worker/` werden in Prod nicht geklont, weil die Images aus GHCR gezogen werden.
+
+> [!IMPORTANT]
+> Alle `make`-Targets in dieser Anleitung müssen aus `/opt/app-store/deployment` laufen — Make sucht das `Makefile` im aktuellen Verzeichnis. Wenn der Prompt `ubuntu@prod-test:~$` zeigt (Home-Verzeichnis), kommt `make: *** No rule to make target '…'.  Stop.`. Vorher `cd /opt/app-store/deployment`.
 
 ## Schritt 2: `.env` anlegen
 
@@ -231,6 +272,24 @@ make prod-seed
 ```
 
 Das Skript ist idempotent — wiederholtes Ausführen schadet nicht und ist bei Timing-Problemen die richtige Antwort.
+
+## Schritt 5.5: Keycloak-Client-URLs auf `APP_BASE_URL` setzen
+
+Der mit `make prod-seed` importierte Realm-Export stammt aus einer Dev-Umgebung und enthält hartcodierte `http://localhost:3000` / `localhost:5173` / `localhost:8000` als Redirect-URIs, Web-Origins und Post-Logout-URIs der beiden Clients. Ohne diesen Schritt lehnt Keycloak **jeden Login/Logout** mit `Invalid redirect uri` ab.
+
+```bash
+make prod-set-keycloak-urls
+```
+
+Liest `APP_BASE_URL` aus der `.env`, loggt sich als Admin bei Keycloak ein und patcht für die beiden Clients:
+
+- **`appstore-frontend`**: `redirectUris`, `webOrigins`, `post.logout.redirect.uris`
+- **`appstore-backend`**: `rootUrl`, `adminUrl`, `redirectUris`, `webOrigins`
+
+Idempotent — kann beliebig oft laufen. Erneut aufrufen, wenn sich `APP_BASE_URL` ändert (z. B. Umstieg von IP auf Domain).
+
+> [!NOTE]
+> Bewusst kein Teil von `prod-seed`: wer in Keycloak manuell zusätzliche Redirect-URIs ergänzt hat (z. B. fürs lokale Testen vom Mac aus gegen die Prod-VM), würde die sonst bei jedem Seed-Lauf verlieren. Dieses Target überschreibt die Listen explizit — Aufruf ist eine bewusste Entscheidung.
 
 ## Schritt 6: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
 
