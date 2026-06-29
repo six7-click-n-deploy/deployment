@@ -535,39 +535,6 @@ def _ensure_app(db: Session, app_def: SeedApp, owner: User) -> App:
     return app
 
 
-def _prune_obsolete_apps(db: Session, keep_names: set[str]) -> None:
-    """Soft-delete every app that is NOT in ``keep_names``.
-
-    Background: earlier seed versions populated a dozen Bastel-/Studi-
-    Apps plus a few private demo apps that should no longer surface
-    anywhere now that we have pruned the catalog to the six official
-    DHBW apps. Hard-deleting them would break FK references from
-    existing Deployment rows (the ``deployments.appId`` FK has no
-    ON DELETE cascade by design); soft-delete keeps the rows around
-    so historical deployments still resolve their app, but hides
-    them from every list / detail / deploy view.
-
-    Both public AND private apps are pruned: "no other apps than the
-    six" is the curation rule, and private apps that linger in the
-    seed DB would still show up under their owner's account and
-    confuse the demo.
-    """
-    stale = (
-        db.query(App)
-        .filter(App.name.notin_(keep_names))
-        .filter(App.deleted_at.is_(None))
-        .all()
-    )
-    if not stale:
-        return
-    now = datetime.utcnow()
-    for app in stale:
-        app.deleted_at = now
-        visibility = "private" if app.is_private else "public"
-        logger.info("App soft-deleted (nicht mehr im Katalog, %s): %s",
-                    visibility, app.name)
-
-
 def _ensure_version(
     db: Session,
     app: App,
@@ -655,11 +622,6 @@ def seed() -> None:
             db_app = _ensure_app(db, app_def, owner)
             for version_tag, status, notes, reason in app_def.versions:
                 _ensure_version(db, db_app, admin_user, version_tag, status, notes, reason)
-
-        # Aufräumen: alle Apps, die nicht mehr im DHBW-Katalog
-        # stehen, soft-deleten — egal ob public oder private. Damit
-        # taucht im UI wirklich nur noch die kuratierte 6er-Liste auf.
-        _prune_obsolete_apps(db, keep_names={a.name for a in APPS})
 
         db.commit()
     except Exception:
