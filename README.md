@@ -46,6 +46,9 @@ appstore/
 
 ## Schritt 2: `.env` anlegen
 
+> [!TIP]
+> Auf Anfrage stellen wir eine fertig befüllte `.env` bereit. In dem Fall genügt es, die Datei direkt nach `deployment/.env` zu legen und mit Schritt 3 weiterzumachen — die folgenden Unterpunkte 2a–2d sind dann nicht nötig.
+
 ```bash
 make env
 ```
@@ -78,7 +81,7 @@ Das Secret kann erst nach dem ersten Keycloak-Start aus dem Admin-UI geholt werd
 KEYCLOAK_CLIENT_SECRET=changeme
 ```
 
-In Schritt 6 wird der echte Wert nachgetragen.
+In Schritt 5 wird der echte Wert nachgetragen.
 
 ### 2c. `GIT_ACCESS_TOKEN` (empfohlen)
 
@@ -102,17 +105,7 @@ make dev-up
 
 Das startet zwölf Container: `frontend`, `backend`, `worker`, `keycloak`, `keycloak-postgres`, `postgres`, `postgres-test`, `postgres-tfstate`, `redis`, `rabbitmq`, `pgadmin`.
 
-Status prüfen:
-
-```bash
-make dev-ps
-```
-
-## Schritt 4: Initialer Boot abwarten
-
-Beim ersten Start zieht Docker rund 2–3 GB an Images und Keycloak provisioniert seine Master-Datenbank. Das dauert auf einem normalen Laptop 1–2 Minuten — auf langsamen Festplatten auch mal 3–4 Minuten.
-
-Fertig ist Keycloak, wenn folgendes in den Logs steht:
+Beim ersten Start dauert der Boot 1–3 Minuten (Image-Pull + Keycloak-Init). Bevor Schritt 4 läuft, sicherstellen dass Keycloak fertig ist:
 
 ```bash
 make dev-logs-keycloak | grep -i "listening on\|started in"
@@ -125,9 +118,8 @@ Listening on: http://0.0.0.0:8080
 ... started in XX.XXXs
 ```
 
-Erst dann mit Schritt 5 weitermachen. Wenn das Seed-Skript zu früh läuft, scheitert es am Keycloak-Login.
 
-## Schritt 5: Migrationen und Seed-Daten
+## Schritt 4: Migrationen und Seed-Daten
 
 Schema anlegen:
 
@@ -143,9 +135,9 @@ make seed-data
 
 Das Skript ist idempotent — wiederholtes Ausführen schadet nicht und ist bei Timing-Problemen die richtige Antwort.
 
-## Schritt 6: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
+## Schritt 5: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
 
-Der mit Schritt 5 importierte Realm bringt den `appstore-backend`-Client mit dem maskierten Secret `**********` aus dem Realm-Export mit. Das ist kein gültiger Wert — das echte Secret muss in Keycloak einmalig neu erzeugt und in die `.env` übernommen werden.
+Der mit Schritt 4 importierte Realm bringt den `appstore-backend`-Client mit dem maskierten Secret `**********` aus dem Realm-Export mit. Das ist kein gültiger Wert — das echte Secret muss in Keycloak einmalig neu erzeugt und in die `.env` übernommen werden.
 
 Vorbereitung: Der `master`-Realm verlangt per Default HTTPS, weshalb http://localhost:8080/admin sonst mit "HTTPS required" abbricht. Einmal abschalten:
 
@@ -200,7 +192,7 @@ Token-Check auf der Kommandozeile:
 make keycloak-token USER=tobias.admin@dhbw.de PASS=1234
 ```
 
-Liefert die ersten 50 Zeichen eines JWT. Wenn stattdessen `invalid_grant` kommt: Seed lief nicht durch (Schritt 5 wiederholen).
+Liefert die ersten 50 Zeichen eines JWT. Wenn stattdessen `invalid_grant` kommt: Seed lief nicht durch (Schritt 4 wiederholen).
 
 ## Login
 
