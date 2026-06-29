@@ -2,12 +2,15 @@
 # Makefile for Multi-Repo Deployment
 # Manages frontend, backend, worker services
 #
-# This Makefile drives the LOCAL development environment
-# (docker-compose.dev.yml). The deployed stack
-# (docker-compose.staging.yml) is deployed exclusively via the
-# Ansible CD pipeline (infrastructure/ansible/) — there are no
-# local deploy-* targets, on purpose: the deployed stack is
-# reproduced from the pipeline, not from a developer laptop.
+# This Makefile drives both the LOCAL development environment
+# (docker-compose.dev.yml) and the production stack
+# (docker-compose.prod.yml) when bootstrapping a Prod-VM by hand —
+# see docs/prod-setup.md for the manual walkthrough.
+#
+# Staging (docker-compose.staging.yml) has no local targets on
+# purpose: that stack is rolled out exclusively via the Ansible CD
+# pipeline (infrastructure/ansible/) so a developer laptop can't
+# accidentally diverge from what CI produces.
 # ================================================================
 #
 # Conventions:
@@ -23,6 +26,7 @@
 # Configuration
 # ----------------------------------------------------------------
 DC_DEV  := docker compose -f docker-compose.dev.yml
+DC_PROD := docker compose -f docker-compose.prod.yml
 
 # Host-Ports (müssen mit den ${...:-default} Werten in den compose-
 # Dateien übereinstimmen, sonst zeigt `make urls` falsche Links).
@@ -50,6 +54,8 @@ PGADMIN_PORT       ?= 5050
         health status stats watch-dev top \
         clean-dev clean-all prune \
         test-backend test-backend-cov lint-backend lint-backend-fix format-backend \
+        prod-up prod-down prod-stop prod-restart prod-pull prod-logs prod-ps \
+        prod-migrate prod-seed prod-cert-self-signed prod-reset \
         up down logs build
 
 # ----------------------------------------------------------------
@@ -400,6 +406,100 @@ lint-backend-fix: ## ruff check --fix
 
 format-backend: ## ruff format
 	$(DC_DEV) exec backend ruff format .
+
+# ----------------------------------------------------------------
+# Production (manual VM bootstrap — see docs/prod-setup.md)
+# ----------------------------------------------------------------
+# Self-signed certificate parameters. Override on the command line if
+# the VM has a public IP / different hostname:
+#   make prod-cert-self-signed PROD_HOST=203.0.113.42
+# Default ``localhost`` is only useful when probing on the VM itself.
+PROD_HOST       ?= localhost
+PROD_CERT_DAYS  ?= 3650
+PROD_CERT_DIR   := nginx/certs
+
+prod-up: ## Start the prod stack (pulls :latest first)
+	$(DC_PROD) up -d --pull always
+
+prod-down: ## Stop and REMOVE prod containers (volumes kept)
+	$(DC_PROD) down
+
+prod-stop: ## Stop prod containers without removing them
+	$(DC_PROD) stop
+
+prod-restart: ## Restart one prod service (usage: make prod-restart SVC=backend)
+	@if [ -z "$(SVC)" ]; then echo "Error: pass SVC=<service>, e.g. SVC=backend"; exit 1; fi
+	$(DC_PROD) up -d --force-recreate $(SVC)
+
+prod-pull: ## Re-pull all prod images and recreate changed containers
+	$(DC_PROD) pull
+	$(DC_PROD) up -d
+
+prod-logs: ## Follow prod logs (all services, or SVC=backend for one)
+	@$(DC_PROD) logs -f $(SVC)
+
+prod-ps: ## List prod containers + health
+	$(DC_PROD) ps
+
+prod-migrate: ## Apply Alembic migrations against the running backend-prod container
+	docker exec backend-prod python -m alembic upgrade head
+
+prod-seed: ## Seed Keycloak users + DB (kurse, apps, approvals) against the prod stack
+	@# Same shape as dev's seed-data: copy script + descriptions + realm
+	@# export into the running backend container, then run it as a plain
+	@# python call (the prod image has no poetry; the venv on PATH makes
+	@# `python` resolve to /app/.venv/bin/python, which has the keycloak
+	@# + SQLAlchemy deps).
+	@# Critically we source .env inside the recipe shell so the
+	@# KEYCLOAK_ADMIN_* values flow into the -e flags below. Without the
+	@# source, the make shell sees them as empty (Make does not
+	@# auto-include .env), the docker compose exec runs with empty
+	@# admin creds, and the seed script hits Keycloak with a 401.
+	@echo "📥 Kopiere Seed-Skript + Realm-Export in den Backend-Container..."
+	$(DC_PROD) cp ./seed/seed_data.py backend:/tmp/seed_data.py
+	$(DC_PROD) cp ./seed/app_descriptions backend:/tmp/app_descriptions
+	$(DC_PROD) cp ./keycloak/realm-export.json backend:/tmp/realm-export.json
+	@echo "🌱 Führe Seed aus..."
+	@set -a; . ./.env; set +a; \
+	if [ -z "$$KEYCLOAK_ADMIN_USER" ] || [ -z "$$KEYCLOAK_ADMIN_PASSWORD" ]; then \
+	  echo "❌ KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASSWORD fehlen in .env"; \
+	  exit 1; \
+	fi; \
+	$(DC_PROD) exec -T \
+	  -e KEYCLOAK_ADMIN_USER="$$KEYCLOAK_ADMIN_USER" \
+	  -e KEYCLOAK_ADMIN_PASSWORD="$$KEYCLOAK_ADMIN_PASSWORD" \
+	  -e REALM_EXPORT_PATH=/tmp/realm-export.json \
+	  backend python /tmp/seed_data.py
+
+prod-cert-self-signed: ## Generate a 10-year self-signed cert (override PROD_HOST=<ip-or-host>)
+	@mkdir -p $(PROD_CERT_DIR) && chmod 700 $(PROD_CERT_DIR)
+	@# Add IP: SAN entry too when PROD_HOST looks like an IPv4 — both
+	@# 'IP:1.2.3.4' and 'DNS:1.2.3.4' would otherwise be rejected by
+	@# strict clients depending on what they were asked to verify.
+	@san="DNS:$(PROD_HOST)"; \
+	if echo "$(PROD_HOST)" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+	  san="IP:$(PROD_HOST),DNS:$(PROD_HOST)"; \
+	fi; \
+	openssl req -x509 -nodes -days $(PROD_CERT_DAYS) -newkey rsa:2048 \
+	  -keyout $(PROD_CERT_DIR)/key.pem \
+	  -out    $(PROD_CERT_DIR)/cert.pem \
+	  -subj   "/CN=$(PROD_HOST)" \
+	  -addext "subjectAltName=$$san"
+	@chmod 600 $(PROD_CERT_DIR)/key.pem
+	@chmod 644 $(PROD_CERT_DIR)/cert.pem
+	@echo ""
+	@echo "✓ Self-signed cert für '$(PROD_HOST)' liegt unter $(PROD_CERT_DIR)/"
+	@echo "  Gültig bis: $$(openssl x509 -in $(PROD_CERT_DIR)/cert.pem -noout -enddate | cut -d= -f2)"
+
+prod-reset: ## ⚠️  STOP prod + DELETE all volumes (DBs, Keycloak, RabbitMQ). Irreversible.
+	@echo "⚠️  This wipes ALL prod data: postgres, keycloak DB, rabbitmq, redis, tfstate."
+	@read -p "Type 'yes' to continue: " -r REPLY; \
+	if [ "$$REPLY" = "yes" ]; then \
+	  $(DC_PROD) down -v; \
+	  echo "✓ Prod stack and all volumes removed."; \
+	else \
+	  echo "Aborted."; \
+	fi
 
 # ----------------------------------------------------------------
 # Aliases
