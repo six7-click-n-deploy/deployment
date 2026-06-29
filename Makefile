@@ -4,7 +4,7 @@
 #
 # This Makefile drives the LOCAL development environment
 # (docker-compose.dev.yml). The deployed stack
-# (docker-compose.deploy.yml) is deployed exclusively via the
+# (docker-compose.staging.yml) is deployed exclusively via the
 # Ansible CD pipeline (infrastructure/ansible/) — there are no
 # local deploy-* targets, on purpose: the deployed stack is
 # reproduced from the pipeline, not from a developer laptop.
@@ -306,7 +306,7 @@ seed-reset: ## ⚠️  Reset DB + Keycloak realm, then seed
 # Database Migrations
 # ----------------------------------------------------------------
 # Migrations on the deployed stack run automatically as a step in
-# the Ansible CD pipeline (infrastructure/ansible/deploy_staging.yml)
+# the Ansible CD pipeline (infrastructure/ansible/staging.yml)
 # — there is no local migrate-deploy target, on purpose.
 migrate-dev: ## Run database migrations (dev)
 	$(DC_DEV) exec backend poetry run alembic upgrade head

@@ -102,7 +102,7 @@ jobs:
         working-directory: infrastructure/ansible
         run: |
           ansible-playbook -i inventory.ini \
-            --private-key ~/.ssh/openstack-key deploy_staging.yml
+            --private-key ~/.ssh/openstack-key staging.yml
         env:
           ANSIBLE_HOST_KEY_CHECKING: 'False'
           ANSIBLE_FORCE_COLOR: 'True'

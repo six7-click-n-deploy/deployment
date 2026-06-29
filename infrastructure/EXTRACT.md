@@ -26,7 +26,7 @@ rsync -a \
   infrastructure/ "$DEST/infrastructure/"
 
 # Workflows
-cp .github/workflows/staging-deploy.yml "$DEST/.github/workflows/"
+cp .github/workflows/staging.yml "$DEST/.github/workflows/"
 
 # act template (tracked). Do NOT copy the real .secrets blindly.
 cp .secrets.template "$DEST/"
@@ -54,7 +54,7 @@ its derived public half as the OpenStack keypair (`<name>-key`), so there's no
 separate keypair name to keep in sync. For local `act` runs, pass it on the CLI:
 
 ```bash
-act -W .github/workflows/staging-deploy.yml --bind --secret-file .secrets \
+act -W .github/workflows/staging.yml --bind --secret-file .secrets \
   -s SSH_PRIVATE_KEY="$(cat ~/.ssh/your-unencrypted-key)"
 ```
 
@@ -86,4 +86,4 @@ only record of the live VMs.
 3. [ ] Root `.gitignore` has `.secrets`; create local `.secrets` from template.
 5. [ ] `git status` shows **no** `tfstate`, `.terraform/`, `.secrets`,
        `inventory.ini`, or `roles_external/` staged.
-6. [ ] Dry run: `act -W .github/workflows/staging-deploy.yml --bind --secret-file .secrets -s SSH_PRIVATE_KEY="$(cat ~/.ssh/key)"`
+6. [ ] Dry run: `act -W .github/workflows/staging.yml --bind --secret-file .secrets -s SSH_PRIVATE_KEY="$(cat ~/.ssh/key)"`

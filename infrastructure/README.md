@@ -17,9 +17,9 @@ output and writes a small `inventory.ini` that Ansible then deploys onto. The tw
 
 ## Environments
 
-| Environment | Terraform dir               | Ansible playbook        | Inventory                         | Trigger                          |
-|-------------|-----------------------------|-------------------------|-----------------------------------|----------------------------------|
-| staging     | `terraform/envs/staging`    | `deploy_staging.yml`    | generated `inventory.ini`         | push to `main`                   |
+| Environment | Terraform dir               | Ansible playbook | Inventory                         | Trigger                          |
+|-------------|-----------------------------|------------------|-----------------------------------|----------------------------------|
+| staging     | `terraform/envs/staging`    | `staging.yml`    | generated `inventory.ini`         | push to `main`                   |
 
 > A separate production environment is documented as future work in
 > the project plan but not yet wired into the codebase. The Terraform
@@ -85,7 +85,7 @@ a possible next step .
 ansible/
 ├── ansible.cfg                       # roles_path, remote_user=ubuntu, SSH tuning, no host key check, no default inventory
 ├── requirements.yml                  # geerlingguy.docker role + community.docker / ansible.posix collections
-├── deploy_staging.yml                # configure Docker + deploy (staging)
+├── staging.yml                       # configure Docker + deploy (staging)
 ├── .gitignore                        # ignores inventory.ini and roles_external/
 ├── inventory.ini                     # GENERATED at deploy time by the workflow (git-ignored / cleaned up)
 └── roles_external/                   # geerlingguy.docker, INSTALLED from Galaxy at deploy time (not vendored, git-ignored)
@@ -106,7 +106,7 @@ created per-run and removed in the workflow's cleanup step.
 
 ### Deploy playbooks
 
-`deploy_staging.yml` runs against the `docker_vm` host:
+`staging.yml` runs against the `docker_vm` host:
 
 1. Creates `/home/ubuntu/app`.
 2. Applies the `geerlingguy.docker` role (installs Docker + Compose).
@@ -118,7 +118,7 @@ created per-run and removed in the workflow's cleanup step.
    URIs match the deployed host.
 5. Generates a self-signed TLS certificate under `nginx/certs/` on first run (idempotent).
 6. Runs `community.docker.docker_compose_v2` with `pull: always` against
-   `docker-compose.deploy.yml` — the full standalone stack (postgres, postgres-tfstate, rabbitmq,
+   `docker-compose.staging.yml` — the full standalone stack (postgres, postgres-tfstate, rabbitmq,
    redis, keycloak + its postgres, backend, worker, frontend, nginx). The explicit `files:` list
    keeps the local-dev `docker-compose.override.yml` from ever being applied to a server.
 7. Waits for the backend container, runs Alembic migrations as an explicit task, and reloads
@@ -133,53 +133,34 @@ cd ansible
 ansible-galaxy role install -r requirements.yml -p roles_external
 ansible-galaxy collection install -r requirements.yml
 printf '[docker_vm]\n%s ansible_user=ubuntu\n' "$(cd ../terraform/envs/staging && terraform output -raw vm_ip)" > inventory.ini
-ansible-playbook -i inventory.ini --private-key /path/to/deploy_key deploy_staging.yml
+ansible-playbook -i inventory.ini --private-key /path/to/deploy_key staging.yml
 ```
 
-### Staging realm + Template-Seed
+### Staging realm
 
-`docker-compose.staging.yml` is a **staging-only** override (referenced only by
-`deploy_staging.yml`, as the second file in its `files:` list). It does one thing: mount
-`keycloak/keycloak-export.json` at the same container path as `deploy.yml`'s
-`keycloak/realm-export.json`, so Compose merges by target and **swaps the realm-import source**
-for staging. Both files define the `dhbw` realm, but the staging one carries **test users**
-(produced by `make keycloak-export`). Production keeps the clean realm.
+The staging environment imports its Keycloak realm from
+`keycloak/realm-export.json` (the same file dev uses), bind-mounted by
+`docker-compose.staging.yml` at `/opt/keycloak/data/import/realm-export.json`.
+Keycloak imports the realm on first boot and skips on subsequent boots
+because the realm already exists in the persistent DB volume.
 
-Isolation comes from staging being its **own Keycloak instance**, not from a renamed realm: the
-backend validates tokens against a single `KEYCLOAK_REALM`, and the frontend bakes the realm at
-build time — so a renamed test realm would break login. Keeping the name `dhbw` lets the unchanged
-backend/frontend images work as-is.
+If you need a realm variant with test users for staging, run
+`make keycloak-export` against a dev environment that already has those
+users — it writes `keycloak/keycloak-export.json` and the staging stack
+can mount that file instead by editing the keycloak `volumes:` entry in
+`docker-compose.staging.yml`. The current playbook does NOT swap the file
+automatically; that was an earlier override-file design that has since
+been simplified out.
 
-After Compose is up, `deploy_staging.yml` seeds example **app templates** so a fresh staging env
-isn't empty. The seed runs **on the VM against `localhost`** (backend `:8000`, Keycloak `:8080`) —
-no public exposure or VPN needed:
-
-1. Wait for the Keycloak realm and the backend `/health` to be ready.
-2. Fetch a token for the test teacher via password grant (`appstore-frontend` client).
-3. `GET /apps/`, then `POST /apps/` for each template in `seed_app_templates` that doesn't already
-   exist (idempotent). The first authenticated call JIT-provisions the backend `users` row, keyed
-   by the token's `sub`.
-
-Configured via playbook vars in `deploy_staging.yml`:
-
-| Var | Meaning |
-| --- | --- |
-| `seed_keycloak_realm` | realm to authenticate against (`dhbw`) |
-| `seed_teacher_user` / `seed_teacher_pass` | test teacher that **must exist in `keycloak-export.json`** with the `teacher` role |
-| `seed_app_templates` | list of `{name, description, git_link}`; empty `git_link` = visible but not deployable (skips the backend's repo-access check) |
-
-Prereqs: run `make keycloak-export` (with the test teacher present in the dev `dhbw` realm) to
-produce `keycloak/keycloak-export.json`, and ensure the `appstore-backend` secret in that export
-matches `KEYCLOAK_CLIENT_SECRET` in the staging `.env` (otherwise the backend's Keycloak-admin
-features fail — login itself is unaffected). Validate the layered compose with:
+Validate the staging compose locally with:
 
 ```bash
-docker compose -f docker-compose.deploy.yml -f docker-compose.staging.yml config
+docker compose -f docker-compose.staging.yml config
 ```
 
 ## CI/CD workflows
 
-The staging workflow (`.github/workflows/staging-deploy.yml`) runs on every push to `main` and
+The staging workflow (`.github/workflows/staging.yml`) runs on every push to `main` and
 follows this shape:
 
 1. **Checkout**.
@@ -225,7 +206,7 @@ must install it from `requirements.yml`).
 Temporary solution while there is no remote state backend using [act](https://github.com/nektos/act):
 
 ```bash
-act -W .github/workflows/staging-deploy.yml --bind --secret-file .secrets
+act -W .github/workflows/staging.yml --bind --secret-file .secrets
 ```
 
 With `--bind`, the container writes directly to your host directory, so `terraform.tfstate` lands
@@ -236,6 +217,6 @@ A better way is to create a key for deployment and use it without storing it in 
 
 ```bash
 
-act -W .github/workflows/staging-deploy.yml --bind --secret-file .secrets \
+act -W .github/workflows/staging.yml --bind --secret-file .secrets \
   -s SSH_PRIVATE_KEY="$(cat ~/.ssh/openstack-deploy)"
 ```

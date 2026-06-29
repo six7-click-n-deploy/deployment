@@ -1,22 +1,28 @@
 # ================================================================
-# Server deployment stack (staging / prod VM) — STANDALONE.
+# Staging stack — STANDALONE, GHCR-pulled, version-pinnable.
 #
 # Pulls pre-built images from GHCR and runs the full stack:
 # postgres (app DB), postgres-tfstate (Terraform state), keycloak
 # (+ its postgres), rabbitmq, redis, backend, worker, frontend,
 # nginx (TLS reverse proxy).
 #
-#   docker compose -f docker-compose.deploy.yml up -d
+#   docker compose -f docker-compose.staging.yml up -d
+#
+# Difference vs ``docker-compose.prod.yml``: the three repo-owned
+# services (backend / worker / frontend) use ``${SERVICE_VERSION:-latest}``
+# so a staging operator can pin a specific commit SHA / tag for a
+# reproducible rollout before promoting to prod. Prod uses hardcoded
+# ``:latest`` with ``pull_policy: always`` — no pinning, just CD.
 #
 # DB migrations are NOT part of this compose file — the Ansible
-# playbook runs `docker exec backend-prod python -m alembic upgrade
-# head` after the stack is up so failures land in the playbook log
+# playbook runs ``docker exec backend-prod python -m alembic upgrade
+# head`` after the stack is up so failures land in the playbook log
 # instead of being buried in compose output.
 #
 # This file mirrors docker-compose.dev.yml service-for-service.
 # Differences vs dev:
 #   - Pulls GHCR images instead of building locally.
-#   - Source-mount and ssh-key-mount removed (prod uses GIT_ACCESS_TOKEN).
+#   - Source-mount and ssh-key-mount removed (staging uses GIT_ACCESS_TOKEN).
 #   - pgadmin removed.
 #   - Required env vars use ${VAR:?required} so a missing .env on the
 #     VM stops compose-up immediately (e.g. SECRET_KEY, APP_BASE_URL,
