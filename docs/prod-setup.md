@@ -1,10 +1,6 @@
 # Produktives Setup
 
-Manuelle Anleitung, um den App-Store-Stack (10 Container — nginx,
-frontend, backend, worker, keycloak + Postgres, postgres,
-postgres-tfstate, rabbitmq, redis) auf einer einzelnen Ubuntu-VM
-hochzuziehen. Alle Service-Images werden zur Laufzeit aus GHCR
-gezogen — gebaut wird auf der VM nichts.
+Der App Store ist ein Web-System, in dem Studierende und Dozierende vorgefertigte Cloud-Apps (Packer + Terraform in einem Git-Repo) per Klick auf OpenStack ausrollen. In Prod läuft alles auf einer einzelnen Ubuntu-VM in zehn Containern: nginx als TLS-Terminator, Vue-Frontend, FastAPI-Backend, Celery-Worker, Keycloak als Identity Provider sowie PostgreSQL (App + Terraform-State + Keycloak), RabbitMQ und Redis als Infrastruktur. Alle Service-Images werden zur Laufzeit aus GHCR gezogen — auf der VM wird nichts gebaut. Diese Anleitung führt von einer leeren Ubuntu-VM bis zum eingeloggten Browser unter `https://<VM-IP>`.
 
 > [!TIP]
 > Im CI-Betrieb läuft der Staging-Stack automatisch über
@@ -17,12 +13,15 @@ gezogen — gebaut wird auf der VM nichts.
 | Werkzeug | Version | Anmerkung |
 |---|---|---|
 | Ubuntu Server | 22.04 LTS | Auch 24.04 funktioniert |
-| Docker Engine | 24.x oder neuer | Inkl. Compose v2 (`docker compose`) |
+| Docker Engine | 24.x oder neuer | Compose v2 ist enthalten |
+| Docker Compose | v2 (`docker compose`, nicht `docker-compose`) | Über Docker Engine bereits dabei |
 | Git | 2.x | |
-| Python 3 | 3.11+ | Einmalig zum Generieren der Secrets |
-| OpenSSL | 3.x | Für das Self-signed-Zertifikat |
-| GNU Make | optional | Alle Schritte sind als `make`-Targets verfügbar; ohne Make einfach die nackten `docker compose`-Aufrufe im Makefile abschreiben. |
+| Python 3 | 3.11+ | Wird einmalig zum Generieren der Secrets gebraucht |
+| OpenSSL | 3.x | Für das Self-signed-Zertifikat (Schritt 3) |
+| GNU Make | Pflicht | Alle Schritte sind als `make`-Targets ausgelegt — wer kein Make hat, kann die zugrunde liegenden Befehle direkt aus dem [Makefile](../Makefile) ablesen |
 | VM-IP | z. B. `203.0.113.42` | Die öffentliche IP, unter der die VM erreichbar ist |
+
+Ein GitHub Personal Access Token mit `repo`-Scope ist **Pflicht** — der Worker klont damit private App-Repos und das Backend verifiziert GitHub-Hooks.
 
 ## Schritt 1: Repository auf die VM klonen
 
@@ -34,35 +33,29 @@ git clone https://github.com/six7-click-n-deploy/deployment
 cd deployment
 ```
 
-Alle weiteren Befehle aus `/opt/app-store/deployment` ausführen — dort
-liegen `docker-compose.prod.yml`, das `Makefile`, das `nginx/`-Verzeichnis
-und der Keycloak-Realm-Export.
+Alle weiteren Befehle werden aus `/opt/app-store/deployment` ausgeführt — dort liegen `Makefile`, `docker-compose.prod.yml`, das `nginx/`-Verzeichnis und der Keycloak-Realm-Export. `frontend/`, `backend/` und `worker/` werden in Prod nicht geklont, weil die Images aus GHCR gezogen werden.
 
 ## Schritt 2: `.env` anlegen
 
-`docker-compose.prod.yml` markiert sämtliche kritischen Werte als
-`${VAR:?... is required}` — der Stack startet erst, wenn jeder Pflicht-Wert
-gesetzt ist.
+> [!TIP]
+> Auf Anfrage stellen wir eine fertig befüllte `.env` bereit. In dem Fall genügt es, die Datei direkt nach `deployment/.env` zu legen und mit Schritt 3 weiterzumachen — die folgenden Unterpunkte 2a–2j sind dann nicht nötig.
+
+`docker-compose.prod.yml` markiert sämtliche kritischen Werte als `${VAR:?... is required}` — der Stack startet erst, wenn jeder Pflicht-Wert gesetzt ist. Anders als in Dev gibt es keine `.env.example` mit Defaults; jede Variable muss explizit gefüllt werden.
 
 ```bash
 touch .env
 chmod 600 .env
 ```
 
-Die folgenden Felder in `.env` eintragen. Reihenfolge ist egal, Kommentare
-mit `#` sind erlaubt.
+Die folgenden Felder in `.env` eintragen. Reihenfolge ist egal, Kommentare mit `#` sind erlaubt.
 
 ### 2a. VM-IP als Variable (zur einfacheren Wiederverwendung unten)
 
-Im Folgenden verwende ich `<VM-IP>` als Platzhalter — ersetze ihn überall
-durch deine tatsächliche IP-Adresse, z. B. `203.0.113.42`. Wenn du auf
-derselben Maschine testest, kann auch `localhost` stehen.
+Im Folgenden verwende ich `<VM-IP>` als Platzhalter — ersetze ihn überall durch deine tatsächliche IP-Adresse, z. B. `203.0.113.42`. Wenn du auf derselben Maschine testest, kann auch `localhost` stehen.
 
 ### 2b. Datenbank-Credentials (Pflicht)
 
-Drei voneinander isolierte Postgres-Instanzen — Anwendung, Terraform-State
-(Worker), Keycloak. Jede bekommt eigene Credentials. Passwörter generieren
-mit `openssl rand -base64 24`.
+Drei voneinander isolierte Postgres-Instanzen — Anwendung, Terraform-State (Worker), Keycloak. Jede bekommt eigene Credentials. Passwörter generieren mit `openssl rand -base64 24`.
 
 ```
 DB_USER=appstore
@@ -93,13 +86,11 @@ KEYCLOAK_ADMIN_USER=admin
 KEYCLOAK_ADMIN_PASSWORD=<random>
 ```
 
-Der Admin-User wird beim ersten Keycloak-Boot im `master`-Realm angelegt
-— danach lässt sich das Passwort ohne DB-Reset nicht mehr ändern. Den
-Wert gut sichern.
+Der Admin-User wird beim ersten Keycloak-Boot im `master`-Realm angelegt — danach lässt sich das Passwort ohne DB-Reset nicht mehr ändern. Den Wert gut sichern.
 
 ### 2e. `SECRET_KEY` (Pflicht)
 
-Symmetrischer Schlüssel für die Backend-JWTs.
+Symmetrischer Schlüssel für die Backend-JWTs. In Dev hat dieser Wert einen Default — in Prod muss er explizit gesetzt werden.
 
 ```bash
 python3 -c 'import secrets; print(secrets.token_hex(32))'
@@ -109,28 +100,27 @@ python3 -c 'import secrets; print(secrets.token_hex(32))'
 SECRET_KEY=<output>
 ```
 
-### 2f. `CREDENTIAL_ENCRYPTION_KEY` (Pflicht)
+### 2f. `CREDENTIAL_ENCRYPTION_KEY` (Pflicht, sonst startet der Stack nicht)
 
-Symmetrischer Fernet-Key, mit dem Backend und Worker OpenStack-Credentials
-ver- und entschlüsseln. Beide Services müssen **denselben** Wert haben
-(passiert automatisch, weil das Compose-File den Wert in beide Container
-durchreicht).
+Symmetrischer Fernet-Key, den Backend und Worker teilen, um OpenStack-Credentials zu ver-/entschlüsseln. Beim Container-Start wird er zwingend geprüft — fehlt er, bricht `docker compose up` mit der Meldung `CREDENTIAL_ENCRYPTION_KEY is required` ab.
+
+Generieren:
 
 ```bash
 python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 ```
 
+Die Ausgabe — ein url-safe-base64-String, der mit `=` endet — als `CREDENTIAL_ENCRYPTION_KEY` in die `.env` eintragen.
+
+Falls `cryptography` lokal nicht installiert ist:
+
+```bash
+pip install cryptography
 ```
-CREDENTIAL_ENCRYPTION_KEY=<output>
-```
 
-Falls `cryptography` lokal nicht installiert ist: `pip install cryptography`
-oder `apt install python3-cryptography`.
+### 2g. `KEYCLOAK_CLIENT_SECRET` (Pflicht für Login)
 
-### 2g. `KEYCLOAK_CLIENT_SECRET` (Platzhalter)
-
-Der echte Wert kann erst nach dem ersten Keycloak-Start aus dem Admin-UI
-geholt werden. Für den Erst-Start einen Platzhalter eintragen:
+Das Secret kann erst nach dem ersten Keycloak-Start aus dem Admin-UI geholt werden. Für den Erst-Start in `.env` einfach einen Platzhalter eintragen:
 
 ```
 KEYCLOAK_CLIENT_SECRET=changeme
@@ -140,10 +130,7 @@ In Schritt 6 wird der echte Wert nachgetragen.
 
 ### 2h. `GIT_ACCESS_TOKEN` (Pflicht)
 
-GitHub Personal Access Token mit `repo`-Scope. Wird vom Worker beim
-Klonen privater App-Repos und vom Backend für Hook-Verifikation
-verwendet. Anlegen unter: GitHub → Settings → Developer settings →
-Personal access tokens (classic) → Generate new token.
+GitHub Personal Access Token mit `repo`-Scope. Wird vom Worker beim Klonen privater App-Repos und vom Backend für Hook-Verifikation verwendet. Anlegen unter: GitHub → Settings → Developer settings → Personal access tokens (classic) → Generate new token.
 
 ```
 GIT_ACCESS_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -151,7 +138,7 @@ GIT_ACCESS_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ### 2i. URLs (Pflicht)
 
-Alle URLs zeigen auf deine VM. Bei IP-VM ohne DNS sieht das so aus:
+Alle URLs zeigen auf deine VM. nginx terminiert HTTPS auf 443 und routet `/api` an das Backend, `/realms` und `/admin` an Keycloak, alles andere an das Frontend — deshalb laufen alle drei `VITE_*_URL`-Werte über dieselbe Origin:
 
 ```
 APP_BASE_URL=https://<VM-IP>
@@ -164,9 +151,7 @@ VITE_KEYCLOAK_URL=https://<VM-IP>
 
 ### 2j. `SMTP_*` (optional)
 
-E-Mail-Benachrichtigungen (Approval-Workflow). Wenn du sie nicht
-brauchst, einfach `SMTP_ENABLED=false` lassen — der Stack startet
-trotzdem und die Mail-Funktionen werden zu No-Ops.
+E-Mail-Benachrichtigungen (Approval-Workflow). Wenn nicht gebraucht, einfach `SMTP_ENABLED=false` lassen und die anderen Felder leer. Für Gmail ein App-Password verwenden, nicht das Account-Passwort.
 
 ```
 SMTP_ENABLED=false
@@ -180,24 +165,20 @@ SMTP_FROM_NAME=Click-n-Deploy
 
 ## Schritt 3: Self-signed-Zertifikat erzeugen
 
-`nginx-prod` terminiert HTTPS auf Port 443 und erwartet zwei Dateien
-unter `nginx/certs/`. Generiere beides mit einem Make-Target:
+In Dev terminiert das Frontend HTTP direkt; in Prod sitzt `nginx-prod` davor und erwartet zwei TLS-Dateien unter `nginx/certs/`. Generiere beides mit einem Make-Target:
 
 ```bash
 make prod-cert-self-signed PROD_HOST=<VM-IP>
 ```
 
-Das Target legt das Verzeichnis an, erzeugt ein 10 Jahre gültiges
-Zertifikat mit `CN=<VM-IP>` und `subjectAltName=IP:<VM-IP>,DNS:<VM-IP>`,
-setzt die richtigen Permissions und gibt das Ablaufdatum aus. Resultat:
+Das Target legt das Verzeichnis an, erzeugt ein 10 Jahre gültiges Zertifikat mit `CN=<VM-IP>` und `subjectAltName=IP:<VM-IP>,DNS:<VM-IP>`, setzt die richtigen Permissions und gibt das Ablaufdatum aus. Resultat:
 
 ```
 nginx/certs/cert.pem      # Public cert
 nginx/certs/key.pem       # Private key, 600
 ```
 
-Browser zeigen beim ersten Aufruf eine Sicherheitswarnung („Verbindung
-nicht sicher") — Ausnahme einmal bestätigen und gut.
+Browser zeigen beim ersten Aufruf eine Sicherheitswarnung („Verbindung nicht sicher") — Ausnahme einmal bestätigen und gut.
 
 ## Schritt 4: Stack starten
 
@@ -205,9 +186,7 @@ nicht sicher") — Ausnahme einmal bestätigen und gut.
 make prod-up
 ```
 
-Das lädt zunächst alle `:latest`-Images aus GHCR (`pull_policy: always`)
-und startet danach die zehn Container. Erstdurchlauf dauert je nach
-Bandbreite 2–5 Minuten.
+Anders als in Dev wird hier nichts gebaut — das Target lädt zunächst alle `:latest`-Images aus GHCR (`pull_policy: always`) und startet danach die zehn Container: `nginx`, `frontend`, `backend`, `worker`, `keycloak`, `keycloak-postgres`, `postgres`, `postgres-tfstate`, `redis`, `rabbitmq`. Erstdurchlauf dauert je nach Bandbreite 2–5 Minuten.
 
 Status prüfen:
 
@@ -215,17 +194,14 @@ Status prüfen:
 make prod-ps
 ```
 
-Alle zehn Container sollten `running (healthy)` melden, sobald die
-Healthchecks durchlaufen sind. Falls ein Container im Crash-Loop steckt,
-gezielt die Logs anschauen:
+Alle zehn Container sollten `running (healthy)` melden, sobald die Healthchecks durchlaufen sind. Falls ein Container im Crash-Loop steckt, gezielt die Logs anschauen (in Prod gibt es keine `dev-logs-<svc>`-Aliasse, der Dienst wird per `SVC=` mitgegeben):
 
 ```bash
 make prod-logs SVC=backend
 make prod-logs SVC=keycloak
 ```
 
-Bevor Schritt 5 läuft, sicherstellen dass Keycloak fertig hochgefahren
-ist:
+Bevor Schritt 5 läuft, sicherstellen dass Keycloak fertig hochgefahren ist:
 
 ```bash
 make prod-logs SVC=keycloak | grep -i "listening on\|started in"
@@ -240,46 +216,40 @@ Listening on: http://0.0.0.0:8080
 
 `Ctrl-C` beendet das Tail.
 
-## Schritt 5: Datenbank-Migrationen anwenden
+## Schritt 5: Migrationen und Seed-Daten
 
-Migrationen sind bewusst NICHT Teil der Compose-Datei (eine
-Migrate-Init-Container-Variante würde Fehler in der Compose-Output
-verstecken). Einmalig per Make-Target anstoßen:
+Anders als in Dev sind Migrationen in Prod kein Teilschritt des Seeds, sondern ein eigenes Target — eine Migrate-Init-Container-Variante würde Fehler im Compose-Output verstecken. Schema anlegen:
 
 ```bash
 make prod-migrate
 ```
 
-Die Ausgabe endet mit `Running upgrade <rev> -> <rev>, …` für jede
-Migration. Bei einem leeren Schema werden alle Migrationen
-nacheinander ausgeführt; bei aktuellem Schema gibt es keine Ausgabe.
+Seed-Daten einspielen (Realm-Import, Test-User, Beispiel-Apps, Kurse):
 
-> [!NOTE]
-> Die Realm-Daten (Clients, Rollen, Realm-Settings) werden beim ersten
-> Start aus `keycloak/realm-export.json` importiert. Test-User wie in
-> Dev werden in Prod NICHT geseedet — User müssen manuell im
-> Keycloak-Admin-UI angelegt werden.
+```bash
+make prod-seed
+```
+
+Das Skript ist idempotent — wiederholtes Ausführen schadet nicht und ist bei Timing-Problemen die richtige Antwort.
 
 ## Schritt 6: Echtes `KEYCLOAK_CLIENT_SECRET` eintragen
 
-Der importierte Realm bringt den `appstore-backend`-Client mit einem
-maskierten Secret-Wert (`**********`) aus dem Realm-Export mit — kein
-gültiger Wert. Das echte Secret muss einmalig in Keycloak neu erzeugt
-und in die `.env` übernommen werden.
+Der mit Schritt 5 importierte Realm bringt den `appstore-backend`-Client mit dem maskierten Secret `**********` aus dem Realm-Export mit. Das ist kein gültiger Wert — das echte Secret muss in Keycloak einmalig neu erzeugt und in die `.env` übernommen werden.
+
+Anders als in Dev entfällt der Vorlauf mit `make keycloak-disable-ssl` — nginx terminiert HTTPS schon, der `master`-Realm akzeptiert die Admin-UI direkt.
 
 1. `https://<VM-IP>/admin` im Browser öffnen (Cert-Warnung akzeptieren).
-2. Mit `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` aus Schritt 2d
-   einloggen.
-3. Realm-Switcher oben links: von `master` auf `dhbw` umstellen.
-4. Links auf **Clients** → `appstore-backend` öffnen.
-5. Reiter **Credentials** → Button **„Regenerate"** klicken.
-6. Den Wert kopieren und in `.env` eintragen:
+2. Mit `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` aus Schritt 2d einloggen.
+3. Oben links im Realm-Switcher von `master` auf `dhbw` umstellen.
+4. Links auf "Clients" → `appstore-backend` öffnen.
+5. Reiter "Credentials" → Button **"Regenerate"** klicken (das Feld zeigt vorher buchstäblich `**********` — das ist die Maskierung aus dem Realm-Export, kein nutzbarer Wert).
+6. Den neu generierten Wert kopieren und in `.env` eintragen:
 
    ```
    KEYCLOAK_CLIENT_SECRET=<kopierter-wert>
    ```
 
-7. Backend neu starten:
+7. Backend neu starten (in Prod gibt es keinen `dev-restart-backend`-Alias, der Dienst wird per `SVC=` mitgegeben):
 
    ```bash
    make prod-restart SVC=backend
@@ -287,29 +257,113 @@ und in die `.env` übernommen werden.
 
 Ab jetzt kann das Backend Tokens validieren.
 
-## Schritt 7: Seed-Daten anlegen
+## Verifikation
 
-Initiale Test-User (Profs, Studenten, ein Admin), die sechs offiziellen
-DHBW-Apps und ihre Approval-Datensätze einspielen:
+In Dev gibt es `make health`, das drei Endpoints curlt — in Prod fehlt das Target, weil nginx HTTPS mit Self-signed-Cert terminiert. Stattdessen einzeln per `curl -k` (ignoriert die Cert-Warnung) oder im Browser prüfen:
 
 ```bash
-make prod-seed
+curl -k https://<VM-IP>/health
+curl -k https://<VM-IP>/api/health
+curl -k https://<VM-IP>/realms/dhbw/.well-known/openid-configuration | head
 ```
 
-Was passiert:
+Oder im Browser einzeln öffnen:
 
-1. `seed/seed_data.py`, `seed/app_descriptions/` und der Realm-Export
-   werden in den `backend-prod`-Container kopiert.
-2. Das Make-Target lädt `.env` im Recipe-Shell und reicht
-   `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` als `-e`-Flags
-   an den `docker compose exec`-Aufruf weiter.
-3. Das Skript meldet sich damit am Realm `master` an und legt im
-   `dhbw`-Realm alle Seed-User an (Standardpasswort: `1234`,
-   Login-Format `<vorname>.<nachname>@dhbw.de`).
-4. Anschließend werden die User in die Backend-DB gespiegelt, vier
-   Kurse erzeugt, Profs als Teacher verlinkt und die sechs Apps
-   (Online-IDE, Ubuntu-App, Web-LaTeX, Jupyter-Notebook, pgAdmin,
-   GitLab-CE) mit ihren `APPROVED`-Versionen geseedet.
+| Dienst | URL | Erwartet |
+|---|---|---|
+| Frontend | `https://<VM-IP>` | Click-n-Deploy Login-Seite |
+| Backend Swagger | `https://<VM-IP>/api/docs` | OpenAPI-UI mit Endpoints `/users`, `/apps`, `/deployments` |
+| Backend Health | `https://<VM-IP>/api/health` | `{"status":"ok"}` |
+| Keycloak Admin | `https://<VM-IP>/admin` | Keycloak Welcome, Login mit `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` aus Schritt 2d |
+| Keycloak OIDC Discovery | `https://<VM-IP>/realms/dhbw/.well-known/openid-configuration` | JSON mit `issuer: https://<VM-IP>/realms/dhbw` |
 
-Das Skript ist idempotent — ein zweiter Aufruf aktualisiert nur, was
-sich verändert hat, und produziert keine Duplikate.
+RabbitMQ-UI und pgAdmin sind in Prod nicht über nginx exponiert (kein Port-Mapping nach außen); für Debugging per Container-Shell oder SSH-Tunnel zugreifen.
+
+## Login
+
+Im Browser `https://<VM-IP>` öffnen, "Login" klicken, mit einem der folgenden Test-User anmelden. Passwort ist für ALLE Seed-User `1234`.
+
+**Administrator**
+
+| E-Mail | Passwort | Rolle |
+|---|---|---|
+| `tobias.admin@dhbw.de` | `1234` | admin |
+
+**Dozierende**
+
+| E-Mail | Passwort |
+|---|---|
+| `michael.eichberg@dhbw.de` | `1234` |
+| `henning.pagnia@dhbw.de` | `1234` |
+| `sarah.detzler@dhbw.de` | `1234` |
+| `frank.hubert@dhbw.de` | `1234` |
+| `andrea.bauer@dhbw.de` | `1234` |
+| `thomas.wagner@dhbw.de` | `1234` |
+
+**Studierende**
+
+| E-Mail | Passwort | Kurs |
+|---|---|---|
+| `luca.baeck@dhbw.de` | `1234` | WI SE B 23 |
+| `felix.erhard@dhbw.de` | `1234` | WI SE B 23 |
+| `okan.soenmez@dhbw.de` | `1234` | WI SE B 23 |
+| `monika.piano@dhbw.de` | `1234` | WI SE B 23 |
+| `anna.schulz@dhbw.de` | `1234` | WI SE B 24 |
+| `jan.krueger@dhbw.de` | `1234` | INF TI 23 |
+
+Hinweise zur E-Mail-Konvention: `<vorname>.<nachname>@dhbw.de`, alles klein, Umlaute werden ersetzt (`ä → ae`, `ö → oe`, `ü → ue`, `ß → ss`). Der Keycloak-Admin (`KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD`) ist NICHT identisch mit den Realm-Usern — er funktioniert nur unter `https://<VM-IP>/admin`, nicht im Frontend.
+
+## Stoppen, Neustarten, Zurücksetzen
+
+### Sauber stoppen (Daten bleiben)
+
+```bash
+make prod-down
+```
+
+Container weg, Volumes (DBs, Keycloak-Daten, RabbitMQ) bleiben. Beim nächsten `make prod-up` startet alles im Zustand vor dem Stopp.
+
+### Nur pausieren (schnellster Re-Start)
+
+```bash
+make prod-stop     # stoppt, Container bleiben
+make prod-up       # läuft wieder
+```
+
+### Einzelnen Dienst neu starten
+
+In Prod gibt es keine pro-Dienst-Aliasse wie in Dev — der Dienst wird per `SVC=` mitgegeben:
+
+```bash
+make prod-restart SVC=backend
+make prod-restart SVC=frontend
+make prod-restart SVC=worker
+```
+
+### Images neu ziehen (nach GHCR-Release)
+
+```bash
+make prod-pull
+```
+
+Zieht alle `:latest`-Images neu und rekreiert die Container, deren Image sich geändert hat. In Dev gibt es kein Pendant, weil dort lokal gebaut wird.
+
+### Logs verfolgen
+
+In Prod ebenfalls per `SVC=…`:
+
+```bash
+make prod-logs                  # alle
+make prod-logs SVC=backend      # nur Backend
+make prod-logs SVC=worker       # nur Worker
+make prod-logs SVC=keycloak     # nur Keycloak
+make prod-logs SVC=nginx        # nur nginx (TLS-Terminator)
+```
+
+### Komplett zurücksetzen (alle Daten weg)
+
+```bash
+make prod-reset
+```
+
+Stoppt den Stack und löscht alle Volumes — irreversibel. Anders als `make seed-reset` in Dev wird **nicht** automatisch neu gemigriert und geseedet; danach von Schritt 4 an wieder durchlaufen (`prod-up` → `prod-migrate` → `prod-seed`). Den Wert für `KEYCLOAK_CLIENT_SECRET` muss man dabei erneut über die Admin-UI regenerieren (Schritt 6), weil der Realm aus dem Export wieder mit dem maskierten Platzhalter importiert wird.

@@ -13,7 +13,6 @@ Der App Store ist ein Web-System, in dem Studierende und Dozierende vorgefertigt
 | GNU Make | Pflicht | Alle Schritte sind als `make`-Targets ausgelegt — wer kein Make hat, kann die zugrunde liegenden Befehle direkt aus dem [Makefile](./Makefile) ablesen |
 | Freie Ports | 5173, 8000, 8080, 5432, 5672, 15672, 6379, 5050, 55433 | Bei Konflikt den entsprechenden Port in der `.env` überschreiben (z. B. `KEYCLOAK_PORT=8180`) — die zugehörige `VITE_*_URL` ebenfalls anpassen |
 
-RAM: mindestens 6 GB frei für Docker. Auf macOS in Docker Desktop unter "Resources" prüfen.
 
 Ein GitHub Personal Access Token mit `repo`-Scope ist empfohlen. Ohne Token funktioniert das Setup, aber Deployments aus privaten App-Repos schlagen fehl.
 
