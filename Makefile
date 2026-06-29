@@ -283,6 +283,7 @@ keycloak-url: ## Print Keycloak URLs
 seed-data: ## Seed Keycloak users + DB (courses, apps, approvals)
 	@echo "📥 Kopiere Seed-Skript + Realm-Export in den Backend-Container..."
 	$(DC_DEV) cp ./seed/seed_data.py backend:/tmp/seed_data.py
+	$(DC_DEV) cp ./seed/app_descriptions backend:/tmp/app_descriptions
 	$(DC_DEV) cp ./keycloak/realm-export.json backend:/tmp/realm-export.json
 	@echo "🌱 Führe Seed aus..."
 	$(DC_DEV) exec -T \

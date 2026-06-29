@@ -38,6 +38,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -180,251 +181,119 @@ ALL_USERS: list[SeedUser] = (
 
 
 # ----------------------------------------------------------------
-# Beispiel-Apps. Die Git-Repos existieren wirklich in der Org
-# six7-click-n-deploy; die Tag-Namen sind die aktuell dort vorhandenen
-# (Stand Juni 2026). Für Profs sind Apps "eingestellt von"; das passt
-# zur Berechtigungslogik (Teacher dürfen Apps in den Store legen).
+# Apps die im Store erscheinen. Genau die sechs DHBW-Apps, keine
+# Bastel- oder Studi-Forks mehr — die Liste matcht 1:1 zu den
+# Repos in der Org ``six7-click-n-deploy``. Beschreibungen leben
+# als Markdown unter ``app_descriptions/`` und werden hier nur zur
+# Laufzeit eingelesen; der Store rendert sie via MarkdownRenderer.
 # ----------------------------------------------------------------
 APPROVED = AppVersionApprovalStatus.APPROVED
 PENDING = AppVersionApprovalStatus.PENDING
 REJECTED = AppVersionApprovalStatus.REJECTED
 
 
+# Verzeichnis mit den Markdown-Beschreibungen. Liegt direkt neben
+# diesem Skript (also relativ zum Seed-Modul, NICHT zum CWD), damit
+# der Container-Aufruf via ``docker compose exec backend python /seed/
+# seed_data.py`` unabhängig vom Arbeitsverzeichnis funktioniert.
+_DESCRIPTIONS_DIR = Path(__file__).parent / "app_descriptions"
+
+
+def _load_description(filename: str) -> str:
+    """Lese den Markdown-Body einer App-Beschreibung.
+
+    Wirft beim Seed-Start einen `FileNotFoundError`, wenn die MD-Datei
+    fehlt — das ist Absicht: ein silent-empty-description-Fallback würde
+    die Apps im Store mit leerer Detail-Seite anzeigen, und das wäre
+    schwerer zu debuggen als ein lauter Crash hier oben.
+    """
+    path = _DESCRIPTIONS_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"App-Beschreibung fehlt: {path}. Lege die Markdown-Datei an, "
+            f"oder entferne die App aus der APPS-Liste."
+        )
+    return path.read_text(encoding="utf-8").rstrip() + "\n"
+
+
+# Default-Owner für die offiziellen DHBW-Apps. Wir setzen alle sechs
+# auf denselben Admin (statt einzelne Profs zuzuweisen), weil die
+# Apps Teil des „offiziellen DHBW-Katalogs" sind und nicht zur
+# Lehrveranstaltung einer einzelnen Person gehören. Wer das ändern
+# möchte, tauscht hier den Admin gegen den jeweiligen Prof aus —
+# der Owner-Pointer steuert nur, wer in der UI als „eingestellt von"
+# auftaucht und wer ohne Admin-Recht die App bearbeiten darf.
+_DHBW_OWNER_EMAIL = _email("Tobias", "Admin")
+
+
 APPS: list[SeedApp] = [
-    # ----------------------------------------------------------------
-    # Prof-eingestellte Apps (Lehrveranstaltungs-Sandboxes).
-    # ----------------------------------------------------------------
     SeedApp(
-        name="Online IDE",
-        description=(
-            "Browser-basierte VS-Code-Instanz (code-server) als Lehr-Sandbox. "
-            "Bring-Your-Own-Repo: Studierende klonen ihr Git-Repo direkt in den "
-            "deploybaren Workspace, kein lokales Setup nötig."
-        ),
+        name="Online-IDE",
+        description=_load_description("Online-IDE.md"),
         git_link="https://github.com/six7-click-n-deploy/Online-IDE.git",
         is_private=False,
-        owner_email=_email("Michael", "Eichberg"),
+        owner_email=_DHBW_OWNER_EMAIL,
         versions=(
-            ("v1.0.7",  APPROVED, "Initialer Rollout für die Vorlesung 'Software Engineering'.", None),
-            ("v1.0.8",  APPROVED, "Default-SecGroup auf den Build-VM-Pfad korrigiert.", None),
-            ("v1.0.9",  REJECTED, "Hotfix – sollte v1.0.10 zuvorkommen.",
-             "Commit-Nachricht 'Fix' ist nicht aussagekräftig genug; bitte Changelog nachreichen."),
-            ("v1.0.10", APPROVED, "Variable für Notebook-URL nachgereicht.", None),
-            ("v1.0.11", APPROVED, "Konfigurationsbeschreibungen für Studierende klarer formuliert.", None),
-            ("v1.0.12", APPROVED, "Cloud-Init-Dateien gebündelt.", None),
-            ("v1.0.13", PENDING,  "Variable-Scopes (Team vs. Deployment) eingeführt – Review angefragt.", None),
-            ("v1.0.14", PENDING,  "Pro-Team Flavor-Auswahl – braucht Sicherheits-Review wegen quotas.", None),
+            ("v1.0.0", APPROVED,
+             "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
+        ),
+    ),
+    SeedApp(
+        name="Ubuntu-App",
+        description=_load_description("Ubuntu-App.md"),
+        git_link="https://github.com/six7-click-n-deploy/Ubuntu-App.git",
+        is_private=False,
+        owner_email=_DHBW_OWNER_EMAIL,
+        versions=(
+            ("v1.0.0", APPROVED,
+             "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
         ),
     ),
     SeedApp(
         name="Web-LaTeX",
-        description=(
-            "Self-hosted Overleaf-Alternative (TexLive-Full). Pro Studierender "
-            "ein persistenter Workspace; nützlich für Abschlussarbeiten und "
-            "Übungsblätter."
-        ),
+        description=_load_description("Web-LaTeX.md"),
         git_link="https://github.com/six7-click-n-deploy/Web-LaTeX.git",
         is_private=False,
-        owner_email=_email("Sarah", "Detzler"),
+        owner_email=_DHBW_OWNER_EMAIL,
         versions=(
             ("v1.0.0", APPROVED,
-             "Erst-Veröffentlichung im Rahmen der DHBW-eigenen App-Store-Migration.",
-             None),
-            ("v1.0.1", REJECTED,
-             "Kleiner Hotfix kurz nach v1.0.0.",
-             "Tag enthält keinen relevanten Diff gegenüber v1.0.0 – bitte v1.0.2 verwenden."),
-            ("v1.0.2", APPROVED,
-             "Build-Image-Pinning korrigiert (TexLive 2025 → 2024 LTS).", None),
+             "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
         ),
     ),
     SeedApp(
-        name="Jupyter Notebook",
-        description=(
-            "Single-User JupyterLab mit vorinstallierten Data-Science-"
-            "Bibliotheken (numpy, pandas, scikit-learn). Geeignet für die "
-            "Lehrveranstaltung 'Maschinelles Lernen'."
-        ),
+        name="Jupyter-Notebook",
+        description=_load_description("Jupyter-Notebook.md"),
         git_link="https://github.com/six7-click-n-deploy/Jupyter-Notebook.git",
         is_private=False,
-        owner_email=_email("Henning", "Pagnia"),
+        owner_email=_DHBW_OWNER_EMAIL,
         versions=(
-            ("v1.0.0", PENDING,
-             "Erstveröffentlichung. Bitte vor Vorlesungsbeginn prüfen.", None),
+            ("v1.0.0", APPROVED,
+             "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
         ),
     ),
     SeedApp(
         name="pgAdmin",
-        description=(
-            "pgAdmin 4 als Web-UI, vorkonfiguriert mit Demo-Datenbank. "
-            "Wird in der Vorlesung 'Datenbanken I' für die SQL-Übungen "
-            "ausgerollt."
-        ),
+        description=_load_description("pgAdmin.md"),
         git_link="https://github.com/six7-click-n-deploy/pgAdmin.git",
         is_private=False,
-        owner_email=_email("Frank", "Hubert"),
+        owner_email=_DHBW_OWNER_EMAIL,
         versions=(
             ("v1.0.0", APPROVED,
-             "Initialer Rollout für DB-I-Vorlesung.", None),
+             "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
         ),
     ),
     SeedApp(
-        name="Ubuntu Sandbox",
-        description=(
-            "Generische Ubuntu-22.04-VM mit SSH-Zugang. Catch-all für "
-            "Studierende, die ihren eigenen Stack mitbringen wollen."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Ubuntu-App.git",
+        # Platzhalter-Git-Link: das private GitLab-CE-Repo existiert
+        # in der Org noch nicht. Sobald es angelegt ist, hier den Link
+        # ersetzen — der Worker klont an dieser URL beim Deploy.
+        name="GitLab-CE",
+        description=_load_description("GitLab-CE.md"),
+        git_link="https://github.com/six7-click-n-deploy/GitLab-CE.git",
         is_private=False,
-        owner_email=_email("Andrea", "Bauer"),
-        versions=(
-            ("v1.0.10", APPROVED,
-             "Cloud-Init-SSH-Konfiguration stabilisiert.", None),
-            ("v1.0.11", REJECTED,
-             "Schnelles Re-Tag wegen Doku-Tippfehler.",
-             "Inhaltlich identisch zu v1.0.10 – kein Mehrwert für End-User."),
-            ("v1.0.12", APPROVED,
-             "Erweiterte Konfigurationsbeschreibungen.", None),
-        ),
-    ),
-    # ----------------------------------------------------------------
-    # Private Bastel-Apps (kein Approval-Prozess, nicht im Store).
-    # Wichtig, weil die Visibility-Logik (``get_visible_apps``) und die
-    # Approval-Liste explizit zwischen public+approved und privaten
-    # Apps unterscheidet — wir brauchen beide Sorten zum Testen.
-    # ----------------------------------------------------------------
-    SeedApp(
-        name="Test-App (Template-Spielwiese)",
-        description=(
-            "Private Test-App zum Ausprobieren neuer Packer-/Terraform-"
-            "Templates. Nicht für Studierende gedacht."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Test-App.git",
-        is_private=True,
-        owner_email=_email("Tobias", "Admin"),
-        versions=(),  # private Apps brauchen keine Approval-Records
-    ),
-    SeedApp(
-        name="My Custom Stack (WIP)",
-        description=(
-            "Persönliche Spiel-App von Eichberg – kombiniert pgAdmin + "
-            "Online-IDE in einem Deployment. Noch nicht reif für den Store."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Online-IDE.git",
-        is_private=True,
-        owner_email=_email("Michael", "Eichberg"),
-        versions=(),
-    ),
-    # ----------------------------------------------------------------
-    # Studenten-Apps. Studierende dürfen ebenfalls Apps in den Store
-    # stellen — typischerweise private Fork/Forschungsprojekte; manche
-    # haben aber auch öffentliche Versionen eingereicht, weil sie ihre
-    # Arbeit teilen wollen. Wir mischen deshalb private, öffentliche
-    # mit PENDING-Submission und öffentliche mit bereits APPROVED
-    # Versionen — damit der Approval-Workflow auch aus Studi-Sicht
-    # testbar wird.
-    # ----------------------------------------------------------------
-    SeedApp(
-        name="Luca's IDE Fork",
-        description=(
-            "Eigener Fork der Online-IDE mit vorinstallierten Rust-Toolchain "
-            "und probe-rs. Ursprünglich für die IoT-Übungen im 5. Semester "
-            "entstanden; öffentlich gemacht, weil ein paar Kommilitonen die "
-            "Konfiguration nachnutzen wollten."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Online-IDE.git",
-        is_private=False,
-        owner_email=_email("Luca", "Bäck"),
-        versions=(
-            ("v1.0.12", APPROVED,
-             "Cloud-Init-Modul für probe-rs ergänzt; lokal getestet auf 4 VMs.", None),
-            ("v1.0.13", PENDING,
-             "Variable-Scopes übernommen — wartet auf Review, damit die "
-             "Kommilitonen aus WI SE B 23 darauf zugreifen können.", None),
-        ),
-    ),
-    SeedApp(
-        name="Felix's LaTeX Vorlage",
-        description=(
-            "Web-LaTeX mit DHBW-Bachelorarbeit-Template vorgeladen. Spart "
-            "den Initial-Klon-Aufwand und enthält die korrekte BibTeX-Konfig."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Web-LaTeX.git",
-        is_private=False,
-        owner_email=_email("Felix", "Erhard"),
-        versions=(
-            ("v1.0.2", PENDING,
-             "Erste öffentliche Version. Bitte vor dem WiSe-Start reviewen, "
-             "damit der Jahrgang sie nutzen kann.", None),
-        ),
-    ),
-    SeedApp(
-        name="Raphael's Notebook-Stack",
-        description=(
-            "Forks des Jupyter-Notebook-Apps mit zusätzlich vorinstalliertem "
-            "PyTorch + CUDA-Treibern. Privater Spielplatz für die "
-            "Studienarbeit."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Jupyter-Notebook.git",
-        is_private=True,
-        owner_email=_email("Raphael", "Plett"),
-        versions=(),
-    ),
-    SeedApp(
-        name="Tom's Ubuntu mit Docker",
-        description=(
-            "Ubuntu-Sandbox mit vor-installiertem Docker-Engine. Gut für "
-            "die DevOps-Übung im 6. Semester. Eingereicht zum Approval, "
-            "wurde aber zunächst abgelehnt."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Ubuntu-App.git",
-        is_private=False,
-        owner_email=_email("Tom", "Weber"),
-        versions=(
-            ("v1.0.12", REJECTED,
-             "Erste Submission. Hatte Docker via cloud-init nachinstalliert.",
-             "Image enthält Klartext-API-Key in /etc/docker/daemon.json — "
-             "bitte nachreichen ohne Credentials im Image."),
-        ),
-    ),
-    SeedApp(
-        name="Monika's Test-Sandbox",
-        description=(
-            "Privater Testplatz für Packer-/Terraform-Experimente. Wird "
-            "irgendwann aufgeräumt, ist momentan reines Bastel-Setup."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Test-App.git",
-        is_private=True,
-        owner_email=_email("Monika", "Piano"),
-        versions=(),
-    ),
-    SeedApp(
-        name="Iven's PostgreSQL Lab",
-        description=(
-            "pgAdmin + vorgeladene Demo-DB für die DB-II-Übung. Open-Source "
-            "geteilt mit dem Jahrgang."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/pgAdmin.git",
-        is_private=False,
-        owner_email=_email("Iven", "Stahl"),
+        owner_email=_DHBW_OWNER_EMAIL,
         versions=(
             ("v1.0.0", APPROVED,
-             "Inhaltlich identisch zur offiziellen pgAdmin-App, aber mit "
-             "vorgeladenem Northwind-Sample.", None),
-        ),
-    ),
-    SeedApp(
-        name="Anna's Web-LaTeX",
-        description=(
-            "Web-LaTeX mit Beamer-Klasse + DHBW-Folien-Template. Nützlich "
-            "für Präsentationen in den Seminaren."
-        ),
-        git_link="https://github.com/six7-click-n-deploy/Web-LaTeX.git",
-        is_private=False,
-        owner_email=_email("Anna", "Schulz"),
-        versions=(
-            ("v1.0.2", PENDING,
-             "Folien-Template eingebunden; warte auf Approval, damit ich "
-             "es für die WI-Studierendenkonferenz freischalten kann.", None),
+             "Erst-Veröffentlichung im offiziellen DHBW-App-Store-Katalog.", None),
         ),
     ),
 ]
@@ -651,11 +520,49 @@ def _ensure_app(db: Session, app_def: SeedApp, owner: User) -> App:
         db.flush()
         logger.info("App angelegt: %s (private=%s)", app_def.name, app_def.is_private)
     else:
-        # Description / Visibility nachziehen.
+        # Description / Visibility / git_link nachziehen. ``deleted_at``
+        # wird explizit zurückgesetzt, falls die App in einem früheren
+        # Seed-Run (oder per Admin-UI) soft-deleted worden war — sonst
+        # wäre sie unsichtbar im Store, obwohl der Seed sie als aktiv
+        # haben will.
         app.description = app_def.description
+        app.git_link = app_def.git_link
         app.is_private = app_def.is_private
         app.userId = owner.userId
+        if app.deleted_at is not None:
+            logger.info("App reaktiviert (deleted_at -> NULL): %s", app_def.name)
+            app.deleted_at = None
     return app
+
+
+def _prune_obsolete_apps(db: Session, keep_names: set[str]) -> None:
+    """Soft-delete every public app that is NOT in ``keep_names``.
+
+    Background: earlier seed versions populated a dozen Bastel-/Studi-
+    Apps that should no longer surface in the store now that we have
+    pruned the catalog to the six official DHBW apps. Hard-deleting
+    them would break FK references from existing Deployment rows (the
+    `deployments.appId` FK has no ON DELETE cascade by design); soft-
+    delete keeps the rows around so historical deployments still
+    resolve their app, but hides them from the store and deploy
+    wizard.
+
+    Private apps (is_private=True) are left alone — they're owned by
+    individual users and aren't part of the curated catalog.
+    """
+    stale = (
+        db.query(App)
+        .filter(App.name.notin_(keep_names))
+        .filter(App.deleted_at.is_(None))
+        .filter(App.is_private.is_(False))
+        .all()
+    )
+    if not stale:
+        return
+    now = datetime.utcnow()
+    for app in stale:
+        app.deleted_at = now
+        logger.info("App soft-deleted (nicht mehr im Katalog): %s", app.name)
 
 
 def _ensure_version(
@@ -667,8 +574,6 @@ def _ensure_version(
     notes: str | None,
     rejection_reason: str | None,
 ) -> None:
-    from datetime import datetime
-
     row = (
         db.query(AppVersionApproval)
         .filter(
@@ -747,6 +652,12 @@ def seed() -> None:
             db_app = _ensure_app(db, app_def, owner)
             for version_tag, status, notes, reason in app_def.versions:
                 _ensure_version(db, db_app, admin_user, version_tag, status, notes, reason)
+
+        # Aufräumen: alte Demo-Apps (Online IDE, Jupyter Notebook, …
+        # Studi-Forks), die nicht mehr im DHBW-Katalog sind, soft-
+        # deleten. Lässt private Bastel-Apps in Ruhe — die gehören
+        # ihren Usern und sind kein Kuratierungsthema.
+        _prune_obsolete_apps(db, keep_names={a.name for a in APPS})
 
         db.commit()
     except Exception:
