@@ -242,7 +242,7 @@ APPS: list[SeedApp] = [
         name="Ubuntu-App",
         description=_load_description("Ubuntu-App.md"),
         git_link="https://github.com/six7-click-n-deploy/Ubuntu-App.git",
-        is_private=False,
+        is_private=True,
         owner_email=_DHBW_OWNER_EMAIL,
         versions=(
             ("v1.0.0", APPROVED,
@@ -275,7 +275,7 @@ APPS: list[SeedApp] = [
         name="pgAdmin",
         description=_load_description("pgAdmin.md"),
         git_link="https://github.com/six7-click-n-deploy/pgAdmin.git",
-        is_private=False,
+        is_private=True,
         owner_email=_DHBW_OWNER_EMAIL,
         versions=(
             ("v1.0.0", APPROVED,
